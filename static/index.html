@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Live LAN Code Editor | Classroom Code Hub</title>
+  
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <!-- CodeMirror 6 Dependencies via CDN -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/codemirror.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/theme/dracula.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/theme/eclipse.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/codemirror.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/mode/python/python.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/addon/edit/closebrackets.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/addon/edit/matchbrackets.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/addon/selection/active-line.min.js"></script>
+
+  <!-- Custom Styles -->
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+
+  <!-- Floating DM Toast Notification Container -->
+  <div id="toastContainer" class="toast-container"></div>
+
+  <!-- Top App Navigation Header -->
+  <header class="app-header">
+    <div class="brand">
+      <div class="logo-icon">
+        <i data-lucide="code-2"></i>
+      </div>
+      <div class="brand-text">
+        <h1>WiFi CodeShare</h1>
+        <span class="badge lan-badge" id="lanBadge" title="Click to view WiFi Connection Details">
+          <i data-lucide="wifi"></i> <span id="lanIpText">Detecting LAN...</span>
+        </span>
+      </div>
+    </div>
+
+    <!-- Active Users Bar -->
+    <div class="presence-bar" id="presenceBar">
+      <span class="presence-label">Active (0):</span>
+      <div class="avatar-group" id="avatarGroup">
+        <!-- Dynamic user pills -->
+      </div>
+    </div>
+
+    <!-- Header Actions -->
+    <div class="header-actions">
+      <!-- Font Size Controller -->
+      <div class="control-pill font-control">
+        <button id="btnFontDec" title="Decrease Font Size"><i data-lucide="minus"></i></button>
+        <span id="lblFontSize">15px</span>
+        <button id="btnFontInc" title="Increase Font Size"><i data-lucide="plus"></i></button>
+      </div>
+
+      <!-- Theme Switcher -->
+      <button class="icon-btn" id="btnThemeToggle" title="Toggle Light / Dark Theme">
+        <i data-lucide="moon" id="iconMoon"></i>
+        <i data-lucide="sun" id="iconSun" style="display:none;"></i>
+      </button>
+
+      <!-- WiFi QR Code Modal Trigger -->
+      <button class="icon-btn text-btn" id="btnShowQr" title="Show WiFi Connection QR Code">
+        <i data-lucide="qr-code"></i>
+        <span>Share WiFi</span>
+      </button>
+
+      <!-- Snapshot History Button -->
+      <button class="icon-btn text-btn" id="btnSnapshots" title="View Code History Snapshots">
+        <i data-lucide="history"></i>
+        <span>Snapshots</span>
+      </button>
+
+      <!-- Chat Sidebar Toggle Button -->
+      <button class="icon-btn text-btn" id="btnToggleChatBar" title="Toggle Classroom Chat Sidebar">
+        <i data-lucide="message-square"></i>
+        <span>Chat</span>
+        <span class="chat-unread-badge" id="chatUnreadBadge" style="display:none;">0</span>
+      </button>
+
+      <!-- Admin Panel Button -->
+      <button class="icon-btn text-btn secondary" id="btnAdmin" title="Lecturer Username Admin">
+        <i data-lucide="shield-check"></i>
+        <span>Lecturer Admin</span>
+      </button>
+
+      <!-- Current User Profile Badge -->
+      <div class="user-badge-container" id="userProfileBadge" style="display:none;">
+        <div class="user-avatar" id="myAvatar">?</div>
+        <span class="username-display" id="myUsername">Guest</span>
+        <button class="mini-btn" id="btnSwitchUser" title="Switch User / Color">
+          <i data-lucide="log-out"></i>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Typing Status Banner -->
+  <div class="typing-banner" id="typingBanner" style="display: none;">
+    <span class="typing-dots"><span class="dot"></span><span class="dot"></span><span class="dot"></span></span>
+    <span id="typingBannerText">Someone is editing...</span>
+  </div>
+
+  <!-- App Viewport (Main + Sidebar) -->
+  <div class="app-viewport">
+    <!-- Main Work Area -->
+    <main class="main-container">
+      <!-- Toolbar -->
+      <div class="editor-toolbar">
+        <div class="toolbar-left">
+          <span class="file-tag"><i data-lucide="file-code-2"></i> main.py</span>
+          <span class="status-indicator connected" id="wsStatus">
+            <span class="status-dot"></span> <span id="wsStatusText">Connected</span>
+          </span>
+        </div>
+
+        <div class="toolbar-right">
+          <button class="btn btn-secondary btn-sm" id="btnSaveSnapshot">
+            <i data-lucide="bookmark"></i> Save Snapshot
+          </button>
+          <button class="btn btn-secondary btn-sm" id="btnCopyCode">
+            <i data-lucide="copy"></i> Copy Code
+          </button>
+          <button class="btn btn-primary btn-sm" id="btnRunCode">
+            <i data-lucide="play"></i> Run Code (Python)
+          </button>
+        </div>
+      </div>
+
+      <!-- Code Editor Window -->
+      <div class="editor-wrapper">
+        <textarea id="codeEditor"></textarea>
+      </div>
+
+      <!-- Live Output Drawer / Terminal -->
+      <div class="output-drawer" id="outputDrawer">
+        <div class="drawer-header">
+          <div class="drawer-title">
+            <i data-lucide="terminal"></i>
+            <span>Execution Output Console</span>
+            <span class="exec-time-tag" id="execTimeTag" style="display:none;">0.00s</span>
+          </div>
+          <div class="drawer-actions">
+            <button class="mini-icon-btn" id="btnClearOutput" title="Clear Console"><i data-lucide="trash-2"></i></button>
+            <button class="mini-icon-btn" id="btnToggleOutput" title="Minimize/Maximize Console"><i data-lucide="chevron-down" id="iconDrawerChevron"></i></button>
+          </div>
+        </div>
+        <div class="drawer-body">
+          <pre class="console-output" id="consoleOutput">Click 'Run Code' above to execute your Python code live on the local server...</pre>
+        </div>
+      </div>
+    </main>
+
+    <!-- Resizable Side Chat Panel -->
+    <aside class="chat-sidebar" id="chatSidebar">
+      <!-- Drag Handle for Resizing Width -->
+      <div class="chat-resize-handle" id="chatResizeHandle" title="Drag to adjust sidebar width (320px - 700px)"></div>
+
+      <!-- Chat Header -->
+      <div class="chat-header">
+        <div class="chat-title">
+          <i data-lucide="message-square"></i>
+          <span>Classroom Chat</span>
+          <span class="chat-online-status" id="chatOnlineStatus" title="Live WebSocket Connection">
+            <span class="status-dot"></span>
+          </span>
+        </div>
+        <div class="chat-header-actions">
+          <button class="mini-icon-btn" id="btnMinimizeChat" title="Minimize Chat Panel">
+            <i data-lucide="minus"></i>
+          </button>
+          <button class="mini-icon-btn" id="btnCollapseChat" title="Close Panel (ESC)">
+            <i data-lucide="x"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- Channel Tabs & Target Selector -->
+      <div class="chat-tabs">
+        <button class="chat-tab active" id="tabGroupChat">
+          <i data-lucide="users"></i> Group (#class)
+        </button>
+        <button class="chat-tab" id="tabPrivateChat">
+          <i data-lucide="message-circle"></i> Direct Messages
+        </button>
+      </div>
+
+      <!-- Discord-style Direct Messages Sub-Sidebar -->
+      <div class="dm-sub-sidebar" id="dmSubSidebar" style="display: none;">
+        <div class="dm-section-title">
+          <span>CONVERSATIONS</span>
+          <button class="mini-btn" id="btnNewDm" title="Start New DM"><i data-lucide="user-plus"></i></button>
+        </div>
+
+        <!-- New DM Dropdown (toggled by btnNewDm) -->
+        <div class="dm-selector-box" id="dmSelectorBox" style="display: none;">
+          <select id="selDmRecipient" class="custom-select mini-select">
+            <option value="" disabled selected>Select student to DM...</option>
+          </select>
+        </div>
+
+        <!-- DM Conversation Cards List -->
+        <div class="dm-conversations-list" id="dmConversationsList">
+          <div class="dm-empty-list">No recent DMs</div>
+        </div>
+      </div>
+
+      <!-- Chat Messages List -->
+      <div class="chat-messages-container" id="chatMessagesContainer">
+        <div class="chat-empty-state">
+          <i data-lucide="messages-square"></i>
+          <p>Classroom Chat Channel</p>
+          <span>Send a message to everyone or pick a student for a private DM.</span>
+        </div>
+      </div>
+
+      <!-- Chat Input Form -->
+      <form class="chat-input-form" id="frmChat" onsubmit="return false;">
+        <button type="button" class="mini-icon-btn" id="btnAttachFile" title="Attach file (Optional)">
+          <i data-lucide="paperclip"></i>
+        </button>
+        <textarea id="txtChatMessage" class="chat-textarea" rows="1" placeholder="Type a message... (Enter to send, Shift+Enter for new line)" autocomplete="off"></textarea>
+        <button type="submit" class="chat-send-btn" id="btnSendChat" title="Send Message">
+          <i data-lucide="send"></i>
+        </button>
+      </form>
+    </aside>
+  </div>
+
+  <!-- LOGIN & USERNAME / COLOR PICKER MODAL -->
+  <dialog id="dlgLogin" class="custom-dialog">
+    <div class="dialog-card glass-card">
+      <div class="dialog-header">
+        <div class="dialog-icon-circle">
+          <i data-lucide="user-check"></i>
+        </div>
+        <h2>Select Your Student Username</h2>
+        <p>Pick your registered name and select your exclusive cursor color to enter the live session.</p>
+      </div>
+
+      <form id="frmLogin" onsubmit="return false;">
+        <div class="form-group">
+          <label for="selUsername">Username:</label>
+          <select id="selUsername" class="custom-select" required>
+            <option value="" disabled selected>Loading usernames...</option>
+          </select>
+        </div>
+
+        <div class="form-group" id="customUsernameGroup" style="display: none;">
+          <label for="txtCustomUsername">Enter Your Guest / Custom Name:</label>
+          <input type="text" id="txtCustomUsername" class="custom-input" placeholder="e.g. Guest Student or Alex" maxlength="25" />
+          <small class="form-help">Enter a unique username to identify your edits live in class.</small>
+        </div>
+
+        <div class="form-group">
+          <label>Pick Your Color (Exclusive to You):</label>
+          <div class="color-picker-grid" id="colorGrid">
+            <!-- Dynamic 12 color boxes -->
+          </div>
+          <small class="form-help" id="colorHelp">Colors marked with <i data-lucide="lock" style="width:12px; height:12px; vertical-align:-1px;"></i> are already claimed by another active student.</small>
+        </div>
+
+        <div class="dialog-actions">
+          <button type="submit" class="btn btn-primary btn-block" id="btnSubmitLogin" disabled>
+            <i data-lucide="log-in"></i> Join Live Editor Session
+          </button>
+        </div>
+      </form>
+    </div>
+  </dialog>
+
+  <!-- SHARE WIFI / QR CODE MODAL -->
+  <dialog id="dlgQr" class="custom-dialog">
+    <div class="dialog-card glass-card text-center">
+      <button class="dialog-close" id="btnCloseQr"><i data-lucide="x"></i></button>
+      <div class="dialog-header">
+        <h2>Join Over Local WiFi (LAN)</h2>
+        <p>Scan this QR code with your phone or open the link below on any laptop connected to the same WiFi network.</p>
+      </div>
+
+      <div class="qr-code-box">
+        <img id="imgQrCode" src="" alt="LAN QR Code" />
+      </div>
+
+      <div class="lan-url-box">
+        <span class="url-label">Direct WiFi URL:</span>
+        <div class="url-input-group">
+          <input type="text" id="txtLanUrl" readonly value="http://..." />
+          <button class="btn btn-secondary" id="btnCopyLanUrl"><i data-lucide="copy"></i> Copy</button>
+        </div>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- LECTURER ADMIN MODAL -->
+  <dialog id="dlgAdmin" class="custom-dialog">
+    <div class="dialog-card glass-card">
+      <button class="dialog-close" id="btnCloseAdmin"><i data-lucide="x"></i></button>
+      <div class="dialog-header">
+        <div class="dialog-icon-circle admin-icon">
+          <i data-lucide="shield"></i>
+        </div>
+        <h2>Lecturer Control Panel</h2>
+        <p>Manage allowed student usernames for this live classroom session.</p>
+      </div>
+
+      <!-- Auth Section -->
+      <div id="adminAuthSec">
+        <div class="form-group">
+          <label for="txtAdminPin">Enter Lecturer Admin PIN:</label>
+          <input type="password" id="txtAdminPin" class="custom-input" placeholder="Default: 1234" value="1234" />
+        </div>
+        <button class="btn btn-primary btn-block" id="btnVerifyPin">Unlock Admin Settings</button>
+      </div>
+
+      <!-- Content Section (Hidden until verified) -->
+      <div id="adminContentSec" style="display: none;">
+        <div class="form-group">
+          <label for="txtAllowedUsers">Allowed Usernames (One per line):</label>
+          <textarea id="txtAllowedUsers" class="custom-textarea" rows="7" placeholder="Lecturer&#10;Alice&#10;Bob&#10;Charlie..."></textarea>
+        </div>
+        <div class="admin-actions">
+          <button class="btn btn-primary" id="btnSaveAdminUsers">
+            <i data-lucide="save"></i> Save Username List
+          </button>
+        </div>
+
+        <hr class="divider" />
+
+        <div class="active-students-summary">
+          <h3>Currently Connected Students</h3>
+          <ul class="active-list" id="lstActiveAdmin">
+            <!-- Dynamic active users -->
+          </ul>
+        </div>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- SNAPSHOTS / HISTORY MODAL -->
+  <dialog id="dlgSnapshots" class="custom-dialog">
+    <div class="dialog-card glass-card wide-dialog">
+      <button class="dialog-close" id="btnCloseSnapshots"><i data-lucide="x"></i></button>
+      <div class="dialog-header">
+        <h2>Code History & Snapshots</h2>
+        <p>View previously saved code points and restore them to the live editor.</p>
+      </div>
+
+      <div class="snapshots-container" id="snapshotsList">
+        <p class="empty-state">No saved snapshots yet.</p>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Main JavaScript App Logic -->
+  <script src="/static/app.js"></script>
+</body>
+</html>

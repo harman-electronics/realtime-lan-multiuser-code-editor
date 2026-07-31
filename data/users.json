@@ -1,0 +1,15 @@
+{
+  "allowed_users": [
+    "Lecturer",
+    "Alice",
+    "Bob",
+    "Charlie",
+    "David",
+    "Emma",
+    "Frank",
+    "Grace",
+    "Hannah",
+    "Ian"
+  ],
+  "admin_pin": "1234"
+}
