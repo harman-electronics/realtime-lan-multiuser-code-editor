@@ -1,0 +1,23 @@
+# Python
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# OS & Editor
+.DS_Store
+.vscode/
+.idea/
+
+# Local runtime and generated files
+*.tmp
+*.log
+output/
+tmp/
+*.zip
+
+# Local secrets
+.env
+.env.*
+!.env.example
