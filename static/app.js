@@ -150,6 +150,32 @@ function initCodeMirror() {
 
   setFontSize(15);
 
+  // Line Creator Hover Tooltip
+  const creatorTooltip = document.createElement('div');
+  creatorTooltip.className = 'creator-tooltip';
+  creatorTooltip.style.display = 'none';
+  document.body.appendChild(creatorTooltip);
+
+  // Read-Only Line Permissions Enforcement
+  editor.on('beforeChange', (cm, changeObj) => {
+    if (isRemoteChange || changeObj.origin === 'remote') return;
+    
+    const startLine = changeObj.from.line;
+    const endLine = changeObj.to.line;
+    const isLecturer = currentUser && currentUser.trim().toLowerCase() === 'lecturer';
+    
+    if (!isLecturer) {
+      for (let l = startLine; l <= endLine; l++) {
+        const info = lineAuthors[String(l)];
+        if (info && info.author && info.author.trim().toLowerCase() !== (currentUser || '').trim().toLowerCase()) {
+          changeObj.cancel();
+          showPermissionWarning(`Line ${l + 1} was created by ${info.author} and is read-only. Only ${info.author} or Lecturer can edit it.`);
+          return;
+        }
+      }
+    }
+  });
+
   // Editor events
   editor.on('change', (cm, changeObj) => {
     if (isRemoteChange || changeObj.origin === 'remote') return;
@@ -165,6 +191,29 @@ function initCodeMirror() {
       c = c.next;
     }
     handleTyping();
+  });
+
+  // Hover Tooltip listener showing "Created by: <creator>"
+  editor.getWrapperElement().addEventListener('mousemove', (e) => {
+    const coords = editor.coordsChar({ left: e.clientX, top: e.clientY });
+    if (!coords || coords.line === undefined) {
+      creatorTooltip.style.display = 'none';
+      return;
+    }
+    const line = coords.line;
+    const info = lineAuthors[String(line)];
+    if (info && info.author) {
+      creatorTooltip.style.left = `${e.clientX + 14}px`;
+      creatorTooltip.style.top = `${e.clientY + 14}px`;
+      creatorTooltip.innerHTML = `Created by: <strong style="color:${info.color || '#38BDF8'}">${escapeHtml(info.author)}</strong>`;
+      creatorTooltip.style.display = 'block';
+    } else {
+      creatorTooltip.style.display = 'none';
+    }
+  });
+
+  editor.getWrapperElement().addEventListener('mouseleave', () => {
+    creatorTooltip.style.display = 'none';
   });
 
   editor.on('cursorActivity', (cm) => {
@@ -185,10 +234,14 @@ function initCodeMirror() {
 
 function handleTyping() {
   sendWsMessage({ type: 'typing', is_typing: true });
+  const curLine = editor.getCursor().line;
+  sendWsMessage({ type: 'typing_line', line: curLine, is_typing: true });
+
   clearTimeout(typingTimeout);
   typingTimeout = setTimeout(() => {
     sendWsMessage({ type: 'typing', is_typing: false });
-  }, 1000);
+    sendWsMessage({ type: 'typing_line', line: curLine, is_typing: false });
+  }, 1200);
 }
 
 // Network Info
@@ -357,6 +410,7 @@ function sendWsMessage(msg) {
 function handleWsMessage(data) {
   switch (data.type) {
     case 'init':
+      if (data.line_authors) lineAuthors = data.line_authors;
       if (data.code !== undefined && editor.getValue() !== data.code) {
         isRemoteChange = true;
         editor.setValue(data.code);
@@ -388,12 +442,21 @@ function handleWsMessage(data) {
       break;
 
     case 'code_delta':
+      if (data.line_authors) lineAuthors = data.line_authors;
       if (!data.from || !data.to || !data.text) break;
       isRemoteChange = true;
       editor.operation(() => {
         editor.replaceRange(data.text, data.from, data.to, 'remote');
       });
       isRemoteChange = false;
+      break;
+
+    case 'permission_denied':
+      showPermissionWarning(data.message || 'Permission denied: This line is read-only.');
+      break;
+
+    case 'typing_line_update':
+      handleRemoteLineTyping(data);
       break;
 
     case 'code_update':
@@ -456,6 +519,88 @@ function handleWsMessage(data) {
     case 'error':
       alert(data.message);
       break;
+  }
+}
+
+let lineAuthors = {};
+const lineTypingActiveTimeouts = new Map();
+const lineTypingBadges = new Map();
+
+function showPermissionWarning(msg) {
+  const container = document.getElementById('toastContainer');
+  if (!container) return;
+
+  const toast = document.createElement('div');
+  toast.className = 'toast-card';
+  toast.style.borderColor = 'var(--danger-color)';
+  toast.innerHTML = `
+    <div class="toast-avatar" style="background-color: var(--danger-color)">🔒</div>
+    <div class="toast-body">
+      <div class="toast-header"><span class="toast-sender" style="color:var(--danger-color)">Read-Only Lock</span></div>
+      <div class="toast-text">${escapeHtml(msg)}</div>
+    </div>
+  `;
+  container.appendChild(toast);
+  setTimeout(() => toast.remove(), 4000);
+}
+
+function hexToRgba(hex, alpha) {
+  if (!hex) return `rgba(56, 189, 248, ${alpha})`;
+  let c = hex.replace('#', '');
+  if (c.length === 3) c = c.split('').map(x => x + x).join('');
+  const num = parseInt(c, 16);
+  return `rgba(${(num >> 16) & 255}, ${(num >> 8) & 255}, ${num & 255}, ${alpha})`;
+}
+
+function handleRemoteLineTyping(data) {
+  const line = data.line;
+  const user = data.username || 'Student';
+  const color = data.color || '#38BDF8';
+  const key = `${data.id}_${line}`;
+
+  if (lineTypingActiveTimeouts.has(key)) {
+    clearTimeout(lineTypingActiveTimeouts.get(key));
+    lineTypingActiveTimeouts.delete(key);
+  }
+
+  clearLineTypingHighlight(data.id, line);
+
+  if (data.is_typing) {
+    const rgbaColor = hexToRgba(color, 0.20);
+    editor.addLineClass(line, 'background', `typing-line-bg-${data.id}`);
+
+    const badge = document.createElement('span');
+    badge.className = 'line-typing-badge';
+    badge.style.backgroundColor = color;
+    badge.innerHTML = `${escapeHtml(user)} ✏️`;
+
+    const lineLen = editor.getLine(line) ? editor.getLine(line).length : 0;
+    const widget = editor.setBookmark({ line: line, ch: lineLen }, { widget: badge });
+    lineTypingBadges.set(key, widget);
+
+    const styleId = `style-typing-${data.id}`;
+    let styleEl = document.getElementById(styleId);
+    if (!styleEl) {
+      styleEl = document.createElement('style');
+      styleEl.id = styleId;
+      document.head.appendChild(styleEl);
+    }
+    styleEl.innerHTML = `.typing-line-bg-${data.id} { background-color: ${rgbaColor} !important; }`;
+
+    const timeout = setTimeout(() => {
+      clearLineTypingHighlight(data.id, line);
+    }, 1500);
+    lineTypingActiveTimeouts.set(key, timeout);
+  }
+}
+
+function clearLineTypingHighlight(userId, line) {
+  const key = `${userId}_${line}`;
+  editor.removeLineClass(line, 'background', `typing-line-bg-${userId}`);
+  if (lineTypingBadges.has(key)) {
+    const widget = lineTypingBadges.get(key);
+    widget.clear();
+    lineTypingBadges.delete(key);
   }
 }
 

@@ -74,12 +74,24 @@ A modern, zero-config real-time collaborative code editor built for classroom en
 - **Responsive Mobile Overlay (<768px)**: Converts automatically to a full-screen glassmorphic overlay drawer on mobile screens.
 - **Keyboard Shortcuts**: `ESC` key press anywhere closes/collapses the panel smoothly.
 
-### 12. Precise Delta Real-Time Text Synchronization
+### 12. Line/Snippet Ownership & Read-Only Permissions (On Feature Branch)
+- **Creator Lock**: Every line/snippet tracks its creator's username and assigned color.
+- **Read-Only Enforcement**: Students can only edit lines they created or new lines they add. Lines created by other students are **read-only** (intercepted on frontend & enforced on backend).
+- **Lecturer Override**: Users logged in as **"Lecturer"** (or Admin PIN `1234`) have permission to edit any line.
+- **Creator Hover Tooltip**: Hovering over any line displays a glassmorphic tooltip: `"Created by: <creator's name>"`.
+
+### 13. Real-Time Synchronized Line Typing Highlights (On Feature Branch)
+- **20% Opacity Color Highlight**: Typing on a line highlights that entire line in the user's assigned color at 20% opacity (`rgba(color, 0.20)`).
+- **End-of-Line Name Badge**: Displays a floating badge with the active user's name at the end of the line (e.g., `Alice ✏️`).
+- **Auto-Fade**: Disappears 1.5 seconds after typing stops.
+- **WebSocket Synchronization**: Synchronized live across all connected screens with minimal latency.
+
+### 14. Precise Delta Real-Time Text Synchronization
 - **CodeMirror Delta Sync (`code_delta`)**: Replaced naive full-document string overwrites with precise range replacement (`editor.replaceRange(text, from, to, 'remote')`).
 - **Concurrent Typing Protection**: Multiple students can type simultaneously anywhere in the codebase without deleting or affecting each other's code.
 
-### 13. Verification & Test Suite
-- Automated test suite `test_app.py` covering LAN IP detection, API endpoints, Python code execution, snapshots, WebSocket color/name reservation, group chat broadcasting, private DM delivery, read state tracking, and concurrent delta patching.
+### 15. Verification & Test Suite
+- Automated test suite `test_app.py` covering LAN IP detection, API endpoints, Python code execution, snapshots, WebSocket color/name reservation, group chat broadcasting, private DM delivery, read state tracking, line ownership permissions, typing line highlights, and concurrent delta patching.
 
 ---
 

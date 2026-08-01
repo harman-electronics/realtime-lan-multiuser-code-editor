@@ -117,6 +117,8 @@ def generate_qr_code(url: str) -> str:
     img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
     return f"data:image/png;base64,{img_str}"
 
+LINE_AUTHORS_FILE = os.path.join(DATA_DIR, "line_authors.json")
+
 # Global State Manager
 class ConnectionManager:
     def __init__(self):
@@ -127,11 +129,36 @@ class ConnectionManager:
             "language": "python"
         })
         self.chat_history: List[Dict[str, Any]] = load_json(CHAT_FILE, [])
+        self.line_authors: Dict[str, Dict[str, str]] = load_json(LINE_AUTHORS_FILE, {
+            "0": {"author": "Lecturer", "color": "#38BDF8"},
+            "1": {"author": "Lecturer", "color": "#38BDF8"}
+        })
 
-    def apply_delta(self, from_pos: dict, to_pos: dict, text_lines: List[str]):
+    def can_user_edit_range(self, username: str, start_line: int, end_line: int) -> bool:
+        if not username:
+            return False
+        if username.strip().lower() in ["lecturer", "admin"]:
+            return True
+        for line_idx in range(start_line, end_line + 1):
+            key = str(line_idx)
+            if key in self.line_authors:
+                author = self.line_authors[key].get("author", "")
+                if author and author.strip().lower() != username.strip().lower():
+                    return False
+        return True
+
+    def record_line_authors(self, start_line: int, num_lines: int, username: str, color: str):
+        for i in range(start_line, start_line + num_lines):
+            self.line_authors[str(i)] = {"author": username, "color": color}
+        save_json(LINE_AUTHORS_FILE, self.line_authors)
+
+    def apply_delta(self, from_pos: dict, to_pos: dict, text_lines: List[str], username: str, color: str):
         new_code = apply_delta_to_code(self.code_state["code"], from_pos, to_pos, text_lines)
         self.code_state["code"] = new_code
         save_json(CODE_FILE, self.code_state)
+        # Record line author for modified lines
+        start_line = from_pos.get('line', 0)
+        self.record_line_authors(start_line, max(1, len(text_lines)), username, color)
 
     def add_chat_message(self, msg: dict):
         self.chat_history.append(msg)
@@ -382,7 +409,8 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
             "claimed_colors": manager.get_claimed_colors(),
             "palette": COLOR_PALETTE,
             "allowed_users": users_data.get("allowed_users", []),
-            "active_users": manager.get_active_users()
+            "active_users": manager.get_active_users(),
+            "line_authors": manager.line_authors
         }))
 
         while True:
@@ -440,18 +468,29 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                 from_pos = data.get("from")
                 to_pos = data.get("to")
                 text_lines = data.get("text", [])
-                author = manager.user_data[client_id].get("username")
-                color = manager.user_data[client_id].get("color")
+                author = manager.user_data[client_id].get("username") or "Guest"
+                color = manager.user_data[client_id].get("color") or "#38BDF8"
                 
                 if from_pos and to_pos and isinstance(text_lines, list):
-                    manager.apply_delta(from_pos, to_pos, text_lines)
+                    start_line = from_pos.get('line', 0)
+                    end_line = to_pos.get('line', 0)
+                    
+                    if not manager.can_user_edit_range(author, start_line, end_line):
+                        await websocket.send_text(json.dumps({
+                            "type": "permission_denied",
+                            "message": f"Line {start_line + 1} was created by another user and is read-only. Only the creator or Lecturer can edit it."
+                        }))
+                        continue
+
+                    manager.apply_delta(from_pos, to_pos, text_lines, author, color)
                     await manager.broadcast({
                         "type": "code_delta",
                         "from": from_pos,
                         "to": to_pos,
                         "text": text_lines,
                         "author": author,
-                        "color": color
+                        "color": color,
+                        "line_authors": manager.line_authors
                     }, exclude=client_id)
 
             elif msg_type == "code_change":
@@ -487,6 +526,18 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                     "id": client_id,
                     "username": manager.user_data[client_id].get("username"),
                     "color": manager.user_data[client_id].get("color"),
+                    "is_typing": is_typing
+                }, exclude=client_id)
+
+            elif msg_type == "typing_line":
+                line = data.get("line", 0)
+                is_typing = data.get("is_typing", False)
+                await manager.broadcast({
+                    "type": "typing_line_update",
+                    "id": client_id,
+                    "username": manager.user_data[client_id].get("username"),
+                    "color": manager.user_data[client_id].get("color"),
+                    "line": line,
                     "is_typing": is_typing
                 }, exclude=client_id)
 
