@@ -117,6 +117,20 @@ def test_snapshots():
     assert snaps[0]["label"] == "Test Lesson 1"
     print("✅ Snapshots API create & list verified!")
 
+
+def test_line_ownership_rules():
+    manager = ConnectionManager()
+    manager.line_authors = {
+        "0": {"author": "Alice", "color": "#FF5722"},
+    }
+
+    assert manager.can_user_edit_range("Alice", 0, 0)
+    assert not manager.can_user_edit_range("Guest_Charlie", 0, 0)
+    assert manager.can_user_edit_range("Lecturer", 0, 0)
+    assert manager.can_user_edit_range("Admin", 0, 0)
+    assert manager.can_user_edit_range("Guest_Charlie", 1, 1)
+    print("✅ Creator ownership, read-only protection & Lecturer override verified!")
+
 def test_websocket_collaboration():
     with client.websocket_connect("/ws/client_test_1") as ws1:
         # Initial message
@@ -223,10 +237,11 @@ def test_websocket_collaboration():
             })
             read_history = receive_event(ws2, "chat_history")
             print("✅ DM Mark Read & Read State Tracking Verified!")
+            # Alice claims a previously unowned line.
             ws1.send_json({
                 "type": "code_delta",
-                "from": {"line": 0, "ch": 0},
-                "to": {"line": 0, "ch": 0},
+                "from": {"line": 5, "ch": 0},
+                "to": {"line": 5, "ch": 0},
                 "text": ["# Alice edit\n"]
             })
             delta_msg_ws2 = receive_event(
@@ -236,20 +251,35 @@ def test_websocket_collaboration():
             )
             assert delta_msg_ws2["text"] == ["# Alice edit\n"]
 
-            # Charlie sends a code delta at line 5
+            # Charlie cannot edit the line Alice just claimed.
             ws2.send_json({
                 "type": "code_delta",
                 "from": {"line": 5, "ch": 0},
                 "to": {"line": 5, "ch": 0},
                 "text": ["# Charlie edit\n"]
             })
-            delta_msg_ws1 = receive_event(
-                ws1,
-                "code_delta",
-                lambda event: event["text"] == ["# Charlie edit\n"],
+            permission_denied = receive_event(
+                ws2,
+                "permission_denied",
+                lambda event: "read-only" in event.get("message", ""),
             )
-            assert delta_msg_ws1["text"] == ["# Charlie edit\n"]
-            print("✅ Concurrent Delta Real-Time Text Sync Verified! Alice and Charlie edits synchronized without overwrites.")
+            assert "read-only" in permission_denied["message"]
+            print("✅ WebSocket line ownership enforcement verified!")
+
+            # Alice's active-line typing indicator is synchronized to Charlie.
+            ws1.send_json({
+                "type": "typing_line",
+                "line": 5,
+                "is_typing": True
+            })
+            typing_line_msg = receive_event(
+                ws2,
+                "typing_line_update",
+                lambda event: event.get("line") == 5,
+            )
+            assert typing_line_msg["username"] == "Alice"
+            assert typing_line_msg["is_typing"] is True
+            print("✅ Real-time synchronized line typing highlights verified!")
 
 if __name__ == "__main__":
     print("\n--- RUNNING BACKEND & WEBSOCKET VERIFICATION ---")
@@ -258,5 +288,6 @@ if __name__ == "__main__":
     test_api_users()
     test_run_code()
     test_snapshots()
+    test_line_ownership_rules()
     test_websocket_collaboration()
     print("\n🎉 ALL BACKEND & WEBSOCKET VERIFICATION TESTS PASSED!\n")

@@ -4,19 +4,35 @@ A real-time LAN code editor for Python with synchronized multiuser editing,
 live presence, chat, snapshots, and server-side code execution—all updated live
 for connected users.
 
-![Version 1 interface](docs/images/version-1-initial-interface.png)
+![Version 1.1 interface](docs/images/version-1.1-line-ownership.png)
 
 ## Version
 
-This repository preview represents **Version 1 — Initial LAN Editor**.
+This repository represents **Version 1.1 — Line Ownership and Typing
+Highlights**.
 
-Version 1 establishes the first working prototype. Later releases will document
-the addition, modification, and removal of features through a public changelog.
+Version 1.1 builds on the initial LAN editor by protecting user-created lines and
+showing synchronized active-line typing indicators. Later releases document
+each addition, modification, and removal through the public changelog.
+
+For a detailed explanation of new features, fixes, changes, and historical
+notes, read the [changelog](CHANGELOG.md).
+
+## What's new in Version 1.1
+
+- Persistent creator ownership for edited lines
+- Read-only protection for lines owned by another participant
+- Lecturer and Admin override access to every line
+- Creator-name tooltips when hovering over owned lines
+- Synchronized line highlights and temporary typing-name badges
+- Backend enforcement so permissions cannot be bypassed through the browser
 
 ## Features
 
 - Real-time shared Python editor over a local Wi-Fi or Ethernet network
 - Live user presence, cursor positions, selections, and typing activity
+- Per-line ownership and read-only editing permissions
+- Live active-line highlights and creator tooltips
 - Exclusive cursor-colour selection for connected users
 - Python execution with standard output and error reporting
 - Group chat and private direct messages
@@ -50,6 +66,7 @@ the addition, modification, and removal of features through a public changelog.
 ├── data/
 │   ├── chat_history.json
 │   ├── code_state.json
+│   ├── line_authors.json
 │   ├── snapshots.json
 │   └── users.json
 ├── docs/
@@ -97,13 +114,37 @@ real messages, saved code, snapshots, or identifying user records.
    trusted LAN can open the Wi-Fi address printed in the terminal or scan the
    QR code from the application.
 
-## Version 1 demonstration access
+## Mobile access (experimental)
+
+The editor can be opened on a phone connected to the same Wi-Fi network as the
+host computer. Use the computer's LAN address, such as
+`http://192.168.x.x:8000`, or scan the QR code shown by the application. Do not
+use `localhost` on the phone because that refers to the phone itself.
+
+Version 1.1 is not yet fully optimized for small mobile screens. For a more
+usable temporary layout, enable **Desktop site** in the mobile browser and use
+the phone in landscape orientation. Full mobile optimization is still in
+progress.
+
+## After upgrading
+
+Stop and restart the Python server after replacing files. Then perform a hard
+refresh so the browser does not continue using an older cached JavaScript or
+CSS file:
+
+- Windows or Linux: `Ctrl+F5`
+- macOS: `Cmd+Shift+R`
+
+If the old interface still appears, close that browser tab and open the LAN
+address again.
+
+## Version 1.1 demonstration access
 
 - Choose a listed name or select the custom Guest option.
 - Select an available cursor colour.
 - The temporary Lecturer Admin PIN is `1234`.
 
-The PIN is a Version 1 development value, not secure production
+The PIN is a Version 1.1 development value, not secure production
 authentication.
 
 ## Testing
@@ -118,7 +159,7 @@ python test_app.py
 
 This prototype executes Python on the host computer and is not a complete
 security sandbox. Use it only on a trusted machine and trusted local network.
-Do not expose Version 1 directly to the public internet.
+Do not expose this version directly to the public internet.
 
 ## Credits
 
@@ -127,7 +168,7 @@ coding agent as a Rapid Application Development demonstration. Early feature
 ideas were shaped through discussions with me and feedback from my classmates.
 
 This clean public-history preparation removes private runtime data while
-preserving the behaviour of the original Version 1 application.
+preserving the behaviour of the original Version 1.1 application.
 
 ## Licence
 

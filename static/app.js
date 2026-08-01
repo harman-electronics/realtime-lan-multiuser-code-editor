@@ -84,7 +84,6 @@ document.addEventListener('DOMContentLoaded', () => {
   initCodeMirror();
   fetchAppInfo();
   initWebSocket();
-  bindEvents();
 });
 
 // Theme Management
