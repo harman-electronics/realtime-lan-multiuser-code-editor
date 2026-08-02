@@ -368,6 +368,7 @@ frmLogin.addEventListener('submit', (e) => {
   myAvatar.textContent = currentUser.charAt(0).toUpperCase();
   myUsername.textContent = currentUser;
   userProfileBadge.style.display = 'flex';
+  updatePermissionModeUI();
 
   dlgLogin.close();
 });

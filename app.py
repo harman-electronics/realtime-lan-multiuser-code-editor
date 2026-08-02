@@ -137,8 +137,8 @@ class ConnectionManager:
         self.permission_mode: str = load_json(PERMISSION_MODE_FILE, {"mode": "restricted"}).get("mode", "restricted")
 
     def set_permission_mode(self, mode: str):
-        self.permission_mode = mode
-        save_json(PERMISSION_MODE_FILE, {"mode": mode})
+        self.permission_mode = mode if mode in {"restricted", "open"} else "restricted"
+        save_json(PERMISSION_MODE_FILE, {"mode": self.permission_mode})
 
     def is_line_empty(self, line_idx: int) -> bool:
         lines = self.code_state["code"].split('\n')
@@ -187,9 +187,13 @@ class ConnectionManager:
         start_line = from_pos.get('line', 0)
         self.cleanup_empty_line_authors()
 
-        non_empty_lines = [l for l in text_lines if l.strip() != ""]
-        if non_empty_lines or len(text_lines) > 0:
-            self.record_line_authors(start_line, len(text_lines), username, color)
+        for offset, line_content in enumerate(text_lines):
+            if line_content.strip() != "":
+                self.line_authors[str(start_line + offset)] = {
+                    "author": username,
+                    "color": color,
+                }
+        save_json(LINE_AUTHORS_FILE, self.line_authors)
 
     def add_chat_message(self, msg: dict):
         self.chat_history.append(msg)

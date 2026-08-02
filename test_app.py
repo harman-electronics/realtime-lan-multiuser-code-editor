@@ -64,11 +64,11 @@ def receive_event(websocket, event_type, predicate=None, timeout=WEBSOCKET_EVENT
 def test_local_ip_and_qr():
     ip = get_local_ip()
     assert ip is not None
-    print(f"✅ Local LAN IP detected: {ip}")
+    print(f"[PASS] Local LAN IP detected: {ip}")
     
     qr = generate_qr_code(f"http://{ip}:8000")
     assert qr.startswith("data:image/png;base64,")
-    print("✅ QR Code base64 generation working!")
+    print("[PASS] QR Code base64 generation working!")
 
 def test_api_info():
     response = client.get("/api/info")
@@ -78,7 +78,7 @@ def test_api_info():
     assert "qr_code" in data
     assert "palette" in data
     assert len(data["palette"]) == 12
-    print(f"✅ /api/info response valid with {len(data['palette'])} colors.")
+    print(f"[PASS] /api/info response valid with {len(data['palette'])} colors.")
 
 def test_api_users():
     response = client.get("/api/users")
@@ -86,7 +86,7 @@ def test_api_users():
     data = response.json()
     assert "allowed_users" in data
     assert "Alice" in data["allowed_users"]
-    print("✅ /api/users retrieved allowed usernames!")
+    print("[PASS] /api/users retrieved allowed usernames!")
 
 def test_run_code():
     code_req = {
@@ -99,7 +99,7 @@ def test_run_code():
     assert "Hello Alice" in data["stdout"]
     assert "Hello Bob" in data["stdout"]
     assert data["returncode"] == 0
-    print(f"✅ Live Python Code Execution successful!\nOutput:\n{data['stdout']}")
+    print(f"[PASS] Live Python Code Execution successful!\nOutput:\n{data['stdout']}")
 
 def test_snapshots():
     snap_req = {
@@ -115,13 +115,19 @@ def test_snapshots():
     snaps = res2.json()["snapshots"]
     assert len(snaps) > 0
     assert snaps[0]["label"] == "Test Lesson 1"
-    print("✅ Snapshots API create & list verified!")
+    print("[PASS] Snapshots API create & list verified!")
 
 
 def test_line_ownership_rules():
     manager = ConnectionManager()
+    manager.permission_mode = "restricted"
+    manager.code_state = {
+        "code": "print('owned')\n\nprint('second owner')",
+        "language": "python",
+    }
     manager.line_authors = {
         "0": {"author": "Alice", "color": "#FF5722"},
+        "2": {"author": "Guest_Charlie", "color": "#9C27B0"},
     }
 
     assert manager.can_user_edit_range("Alice", 0, 0)
@@ -129,7 +135,22 @@ def test_line_ownership_rules():
     assert manager.can_user_edit_range("Lecturer", 0, 0)
     assert manager.can_user_edit_range("Admin", 0, 0)
     assert manager.can_user_edit_range("Guest_Charlie", 1, 1)
-    print("✅ Creator ownership, read-only protection & Lecturer override verified!")
+
+    manager.set_permission_mode("open")
+    assert manager.can_user_edit_range("Guest_Charlie", 0, 0)
+
+    manager.set_permission_mode("restricted")
+    manager.apply_delta(
+        {"line": 0, "ch": 0},
+        {"line": 0, "ch": len("print('owned')")},
+        [""],
+        "Alice",
+        "#FF5722",
+    )
+    assert manager.code_state["code"].split("\n")[0] == ""
+    assert "0" not in manager.line_authors
+    assert manager.can_user_edit_range("Guest_Charlie", 0, 0)
+    print("[PASS] Restricted/Open modes, blank-line access & ownership release verified!")
 
 def test_websocket_collaboration():
     with client.websocket_connect("/ws/client_test_1") as ws1:
@@ -152,7 +173,7 @@ def test_websocket_collaboration():
         )
         assert join_msg["user"]["username"] == "Alice"
         assert join_msg["claimed_colors"]["#FF5722"] == "Alice"
-        print("✅ WebSocket join, chat history & exclusive color lock verified for Alice (#FF5722)!")
+        print("[PASS] WebSocket join, chat history & exclusive color lock verified for Alice (#FF5722)!")
 
         # Client 2 connects and tries claiming the same username "Alice"
         with client.websocket_connect("/ws/client_test_2") as ws2:
@@ -168,7 +189,7 @@ def test_websocket_collaboration():
                 lambda event: "already logged in" in event.get("message", ""),
             )
             assert "already logged in" in err_msg_user["message"]
-            print("✅ Duplicate Username Prevention Enforced! Client 2 was blocked from taking Alice's name.")
+            print("[PASS] Duplicate Username Prevention Enforced! Client 2 was blocked from taking Alice's name.")
 
             # Client 2 connects with unique Guest Name "Guest_Charlie"
             ws2.send_json({
@@ -191,7 +212,7 @@ def test_websocket_collaboration():
                 "user_joined",
                 lambda event: event["user"]["username"] == "Guest_Charlie",
             )
-            print("✅ Custom / Guest Name Join Verified for Guest_Charlie!")
+            print("[PASS] Custom / Guest Name Join Verified for Guest_Charlie!")
 
             # Alice sends Group Chat Message
             ws1.send_json({
@@ -211,7 +232,7 @@ def test_websocket_collaboration():
             )
             assert chat_msg_ws1["message"]["text"] == "Hello class!"
             assert chat_msg_ws2["message"]["text"] == "Hello class!"
-            print("✅ Group Chat Broadcasting Verified!")
+            print("[PASS] Group Chat Broadcasting Verified!")
 
             # Alice sends Private Direct Message to Guest_Charlie
             ws1.send_json({
@@ -236,12 +257,12 @@ def test_websocket_collaboration():
                 "target": "Alice"
             })
             read_history = receive_event(ws2, "chat_history")
-            print("✅ DM Mark Read & Read State Tracking Verified!")
+            print("[PASS] DM Mark Read & Read State Tracking Verified!")
             # Alice claims a previously unowned line.
             ws1.send_json({
                 "type": "code_delta",
-                "from": {"line": 5, "ch": 0},
-                "to": {"line": 5, "ch": 0},
+                "from": {"line": 1, "ch": 0},
+                "to": {"line": 1, "ch": 0},
                 "text": ["# Alice edit\n"]
             })
             delta_msg_ws2 = receive_event(
@@ -254,8 +275,8 @@ def test_websocket_collaboration():
             # Charlie cannot edit the line Alice just claimed.
             ws2.send_json({
                 "type": "code_delta",
-                "from": {"line": 5, "ch": 0},
-                "to": {"line": 5, "ch": 0},
+                "from": {"line": 1, "ch": 0},
+                "to": {"line": 1, "ch": 0},
                 "text": ["# Charlie edit\n"]
             })
             permission_denied = receive_event(
@@ -264,22 +285,86 @@ def test_websocket_collaboration():
                 lambda event: "read-only" in event.get("message", ""),
             )
             assert "read-only" in permission_denied["message"]
-            print("✅ WebSocket line ownership enforcement verified!")
+            print("[PASS] WebSocket line ownership enforcement verified!")
 
             # Alice's active-line typing indicator is synchronized to Charlie.
             ws1.send_json({
                 "type": "typing_line",
-                "line": 5,
+                "line": 1,
                 "is_typing": True
             })
             typing_line_msg = receive_event(
                 ws2,
                 "typing_line_update",
-                lambda event: event.get("line") == 5,
+                lambda event: event.get("line") == 1,
             )
             assert typing_line_msg["username"] == "Alice"
             assert typing_line_msg["is_typing"] is True
-            print("✅ Real-time synchronized line typing highlights verified!")
+            print("[PASS] Real-time synchronized line typing highlights verified!")
+
+            # A Lecturer can enable global Open Editing mode for the class.
+            with client.websocket_connect("/ws/client_test_3") as ws3:
+                lecturer_init = receive_event(ws3, "init")
+                assert lecturer_init["permission_mode"] == "restricted"
+                ws3.send_json({
+                    "type": "join",
+                    "username": "Lecturer",
+                    "color": "#38BDF8",
+                })
+                receive_event(ws3, "chat_history")
+                receive_event(
+                    ws3,
+                    "user_joined",
+                    lambda event: event["user"]["username"] == "Lecturer",
+                )
+                receive_event(
+                    ws1,
+                    "user_joined",
+                    lambda event: event["user"]["username"] == "Lecturer",
+                )
+                receive_event(
+                    ws2,
+                    "user_joined",
+                    lambda event: event["user"]["username"] == "Lecturer",
+                )
+
+                ws3.send_json({
+                    "type": "toggle_permission_mode",
+                    "mode": "open",
+                })
+                for websocket in (ws1, ws2, ws3):
+                    mode_event = receive_event(
+                        websocket,
+                        "permission_mode_updated",
+                        lambda event: event.get("permission_mode") == "open",
+                    )
+                    assert mode_event["permission_mode"] == "open"
+
+                # Charlie can now edit the line that Alice owns.
+                ws2.send_json({
+                    "type": "code_delta",
+                    "from": {"line": 1, "ch": 0},
+                    "to": {"line": 1, "ch": 0},
+                    "text": ["# Open mode edit\n"],
+                })
+                open_delta = receive_event(
+                    ws1,
+                    "code_delta",
+                    lambda event: event["text"] == ["# Open mode edit\n"],
+                )
+                assert open_delta["author"] == "Guest_Charlie"
+
+                ws3.send_json({
+                    "type": "toggle_permission_mode",
+                    "mode": "restricted",
+                })
+                for websocket in (ws1, ws2, ws3):
+                    receive_event(
+                        websocket,
+                        "permission_mode_updated",
+                        lambda event: event.get("permission_mode") == "restricted",
+                    )
+                print("[PASS] Lecturer global permission-mode synchronization verified!")
 
 if __name__ == "__main__":
     print("\n--- RUNNING BACKEND & WEBSOCKET VERIFICATION ---")
@@ -290,4 +375,4 @@ if __name__ == "__main__":
     test_snapshots()
     test_line_ownership_rules()
     test_websocket_collaboration()
-    print("\n🎉 ALL BACKEND & WEBSOCKET VERIFICATION TESTS PASSED!\n")
+    print("\nALL BACKEND & WEBSOCKET VERIFICATION TESTS PASSED!\n")
