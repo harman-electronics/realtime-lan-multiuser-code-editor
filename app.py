@@ -118,6 +118,7 @@ def generate_qr_code(url: str) -> str:
     return f"data:image/png;base64,{img_str}"
 
 LINE_AUTHORS_FILE = os.path.join(DATA_DIR, "line_authors.json")
+PERMISSION_MODE_FILE = os.path.join(DATA_DIR, "permission_mode.json")
 
 # Global State Manager
 class ConnectionManager:
@@ -133,13 +134,28 @@ class ConnectionManager:
             "0": {"author": "Lecturer", "color": "#38BDF8"},
             "1": {"author": "Lecturer", "color": "#38BDF8"}
         })
+        self.permission_mode: str = load_json(PERMISSION_MODE_FILE, {"mode": "restricted"}).get("mode", "restricted")
+
+    def set_permission_mode(self, mode: str):
+        self.permission_mode = mode
+        save_json(PERMISSION_MODE_FILE, {"mode": mode})
+
+    def is_line_empty(self, line_idx: int) -> bool:
+        lines = self.code_state["code"].split('\n')
+        if 0 <= line_idx < len(lines):
+            return lines[line_idx].strip() == ""
+        return True
 
     def can_user_edit_range(self, username: str, start_line: int, end_line: int) -> bool:
+        if self.permission_mode == "open":
+            return True
         if not username:
             return False
         if username.strip().lower() in ["lecturer", "admin"]:
             return True
         for line_idx in range(start_line, end_line + 1):
+            if self.is_line_empty(line_idx):
+                continue
             key = str(line_idx)
             if key in self.line_authors:
                 author = self.line_authors[key].get("author", "")
@@ -152,13 +168,28 @@ class ConnectionManager:
             self.line_authors[str(i)] = {"author": username, "color": color}
         save_json(LINE_AUTHORS_FILE, self.line_authors)
 
+    def cleanup_empty_line_authors(self):
+        lines = self.code_state["code"].split('\n')
+        new_authors = {}
+        for i, line_content in enumerate(lines):
+            if line_content.strip() != "":
+                if str(i) in self.line_authors:
+                    new_authors[str(i)] = self.line_authors[str(i)]
+        self.line_authors = new_authors
+        save_json(LINE_AUTHORS_FILE, self.line_authors)
+
     def apply_delta(self, from_pos: dict, to_pos: dict, text_lines: List[str], username: str, color: str):
         new_code = apply_delta_to_code(self.code_state["code"], from_pos, to_pos, text_lines)
         self.code_state["code"] = new_code
         save_json(CODE_FILE, self.code_state)
-        # Record line author for modified lines
+
+        # Cleanup released empty lines & record line authors for modified non-empty lines
         start_line = from_pos.get('line', 0)
-        self.record_line_authors(start_line, max(1, len(text_lines)), username, color)
+        self.cleanup_empty_line_authors()
+
+        non_empty_lines = [l for l in text_lines if l.strip() != ""]
+        if non_empty_lines or len(text_lines) > 0:
+            self.record_line_authors(start_line, len(text_lines), username, color)
 
     def add_chat_message(self, msg: dict):
         self.chat_history.append(msg)
@@ -410,7 +441,8 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
             "palette": COLOR_PALETTE,
             "allowed_users": users_data.get("allowed_users", []),
             "active_users": manager.get_active_users(),
-            "line_authors": manager.line_authors
+            "line_authors": manager.line_authors,
+            "permission_mode": manager.permission_mode
         }))
 
         while True:
@@ -528,6 +560,16 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                     "color": manager.user_data[client_id].get("color"),
                     "is_typing": is_typing
                 }, exclude=client_id)
+
+            elif msg_type == "toggle_permission_mode":
+                new_mode = data.get("mode", "restricted")
+                username = manager.user_data[client_id].get("username")
+                if username and (username.strip().lower() in ["lecturer", "admin"] or "lecturer" in username.lower()):
+                    manager.set_permission_mode(new_mode)
+                    await manager.broadcast({
+                        "type": "permission_mode_updated",
+                        "permission_mode": manager.permission_mode
+                    })
 
             elif msg_type == "typing_line":
                 line = data.get("line", 0)

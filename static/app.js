@@ -158,6 +158,7 @@ function initCodeMirror() {
   // Read-Only Line Permissions Enforcement
   editor.on('beforeChange', (cm, changeObj) => {
     if (isRemoteChange || changeObj.origin === 'remote') return;
+    if (permissionMode === 'open') return; // Open Editing Mode allows all!
     
     const startLine = changeObj.from.line;
     const endLine = changeObj.to.line;
@@ -165,6 +166,9 @@ function initCodeMirror() {
     
     if (!isLecturer) {
       for (let l = startLine; l <= endLine; l++) {
+        const lineText = cm.getLine(l) || '';
+        if (lineText.trim() === '') continue; // Unclaimed blank line!
+
         const info = lineAuthors[String(l)];
         if (info && info.author && info.author.trim().toLowerCase() !== (currentUser || '').trim().toLowerCase()) {
           changeObj.cancel();
@@ -410,6 +414,8 @@ function handleWsMessage(data) {
   switch (data.type) {
     case 'init':
       if (data.line_authors) lineAuthors = data.line_authors;
+      if (data.permission_mode) permissionMode = data.permission_mode;
+      updatePermissionModeUI();
       if (data.code !== undefined && editor.getValue() !== data.code) {
         isRemoteChange = true;
         editor.setValue(data.code);
@@ -425,6 +431,11 @@ function handleWsMessage(data) {
       if (!currentUser) {
         dlgLogin.showModal();
       }
+      break;
+
+    case 'permission_mode_updated':
+      permissionMode = data.permission_mode || 'restricted';
+      updatePermissionModeUI();
       break;
 
     case 'user_joined':
@@ -519,6 +530,42 @@ function handleWsMessage(data) {
       alert(data.message);
       break;
   }
+}
+
+let permissionMode = 'restricted';
+const btnTogglePermissionMode = document.getElementById('btnTogglePermissionMode');
+const lblPermMode = document.getElementById('lblPermMode');
+const iconPermLock = document.getElementById('iconPermLock');
+const iconPermUnlock = document.getElementById('iconPermUnlock');
+
+function updatePermissionModeUI() {
+  if (!btnTogglePermissionMode) return;
+
+  const isLecturer = currentUser && (currentUser.trim().toLowerCase() === 'lecturer' || currentUser.trim().toLowerCase() === 'admin');
+  if (isLecturer) {
+    btnTogglePermissionMode.style.display = 'inline-flex';
+  } else {
+    btnTogglePermissionMode.style.display = 'none';
+  }
+
+  if (permissionMode === 'open') {
+    if (lblPermMode) lblPermMode.textContent = 'Open Editing';
+    if (iconPermLock) iconPermLock.style.display = 'none';
+    if (iconPermUnlock) iconPermUnlock.style.display = 'inline-block';
+    btnTogglePermissionMode.classList.add('open-mode');
+  } else {
+    if (lblPermMode) lblPermMode.textContent = 'Restricted';
+    if (iconPermLock) iconPermLock.style.display = 'inline-block';
+    if (iconPermUnlock) iconPermUnlock.style.display = 'none';
+    btnTogglePermissionMode.classList.remove('open-mode');
+  }
+}
+
+if (btnTogglePermissionMode) {
+  btnTogglePermissionMode.addEventListener('click', () => {
+    const nextMode = permissionMode === 'restricted' ? 'open' : 'restricted';
+    sendWsMessage({ type: 'toggle_permission_mode', mode: nextMode });
+  });
 }
 
 let lineAuthors = {};

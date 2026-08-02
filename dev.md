@@ -74,10 +74,12 @@ A modern, zero-config real-time collaborative code editor built for classroom en
 - **Responsive Mobile Overlay (<768px)**: Converts automatically to a full-screen glassmorphic overlay drawer on mobile screens.
 - **Keyboard Shortcuts**: `ESC` key press anywhere closes/collapses the panel smoothly.
 
-### 12. Line/Snippet Ownership & Read-Only Permissions (On Feature Branch)
-- **Creator Lock**: Every line/snippet tracks its creator's username and assigned color.
-- **Read-Only Enforcement**: Students can only edit lines they created or new lines they add. Lines created by other students are **read-only** (intercepted on frontend & enforced on backend).
-- **Lecturer Override**: Users logged in as **"Lecturer"** (or Admin PIN `1234`) have permission to edit any line.
+### 12. Line/Snippet Ownership & Read-Only Permissions (Option A on Feature Branch)
+- **Option A Unclaimed Blank Lines**: Any empty line or line with only spaces is **Unclaimed / Open to All**.
+- **Auto-Claiming & Auto-Release**: Typing on a blank line claims ownership. Clearing all text on a line automatically releases the lock.
+- **Creator Lock**: Non-empty lines track creator username and assigned color. Other students trying to edit non-empty lines are blocked with a read-only lock.
+- **Lecturer Global Permission Control**: Lecturer can toggle between **🔒 Restricted Mode** (default locks) and **🔓 Open Editing Mode** (allows all students to edit any line across the document).
+- **Live Broadcast**: Switching permission modes broadcasts `permission_mode_updated` instantly across WebSockets.
 - **Creator Hover Tooltip**: Hovering over any line displays a glassmorphic tooltip: `"Created by: <creator's name>"`.
 
 ### 13. Real-Time Synchronized Line Typing Highlights (On Feature Branch)

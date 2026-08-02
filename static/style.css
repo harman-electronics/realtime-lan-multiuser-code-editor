@@ -999,6 +999,19 @@ body.is-resizing {
   border-color: var(--accent-color);
 }
 
+/* Class Permission Mode Toggle Styling */
+.permission-btn {
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  background: rgba(245, 158, 11, 0.15);
+  color: var(--warning-color);
+  transition: all 0.2s ease;
+}
+.permission-btn.open-mode {
+  border: 1px solid rgba(34, 197, 94, 0.4);
+  background: rgba(34, 197, 94, 0.15);
+  color: var(--success-color);
+}
+
 /* Line Typing Highlights & Creator Tooltips */
 .line-typing-badge {
   display: inline-flex;
