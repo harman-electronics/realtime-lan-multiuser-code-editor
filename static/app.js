@@ -1,132 +1,192 @@
-// Global State
-let currentUser = null;
-let currentColor = null;
-let currentFontSize = 15;
-let socket = null;
-let clientId = 'client_' + Math.random().toString(36).substring(2, 11);
-let editor = null;
-let isRemoteChange = false;
-let typingTimeout = null;
-let remoteCursors = {}; // connection_id -> marker/widget
-let palette = [];
-let claimedColors = {};
+const state = {
+  authToken: localStorage.getItem('live_editor_auth_token') || '',
+  user: null,
+  color: localStorage.getItem('live_editor_color') || null,
+  socket: null,
+  socketReady: false,
+  joined: false,
+  clientId: `client_${Math.random().toString(36).slice(2, 11)}`,
+  palette: [],
+  claimedColors: {},
+  files: [],
+  tabLimit: 6,
+  activeFileId: null,
+  lineAuthors: {},
+  activeUsers: [],
+  students: [],
+  editableOwnerIds: new Set(),
+  globalEditor: false,
+  editor: null,
+  isRemoteChange: false,
+  typingTimeout: null,
+  typingUsers: new Set(),
+  remoteCursors: new Map(),
+  lineTypingTimeouts: new Map(),
+  chatHistory: [],
+  currentChatTab: 'group',
+  activeDmAccountId: null,
+  unreadCount: 0,
+};
 
-// DOM Elements
+const $ = (id) => document.getElementById(id);
 const body = document.body;
-const btnThemeToggle = document.getElementById('btnThemeToggle');
-const iconMoon = document.getElementById('iconMoon');
-const iconSun = document.getElementById('iconSun');
 
-const btnFontInc = document.getElementById('btnFontInc');
-const btnFontDec = document.getElementById('btnFontDec');
-const lblFontSize = document.getElementById('lblFontSize');
+const elements = {
+  btnThemeToggle: $('btnThemeToggle'),
+  iconMoon: $('iconMoon'),
+  iconSun: $('iconSun'),
+  btnFontInc: $('btnFontInc'),
+  btnFontDec: $('btnFontDec'),
+  lblFontSize: $('lblFontSize'),
+  lanBadge: $('lanBadge'),
+  lanIpText: $('lanIpText'),
+  btnShowQr: $('btnShowQr'),
+  dlgQr: $('dlgQr'),
+  imgQrCode: $('imgQrCode'),
+  txtLanUrl: $('txtLanUrl'),
+  btnCopyLanUrl: $('btnCopyLanUrl'),
+  btnCloseQr: $('btnCloseQr'),
+  dlgLogin: $('dlgLogin'),
+  loginRoleSelection: $('loginRoleSelection'),
+  loginSubtitle: $('loginSubtitle'),
+  btnChooseAdmin: $('btnChooseAdmin'),
+  btnChooseStudent: $('btnChooseStudent'),
+  frmAdminLogin: $('frmAdminLogin'),
+  frmStudentLogin: $('frmStudentLogin'),
+  btnBackFromAdmin: $('btnBackFromAdmin'),
+  btnBackFromStudent: $('btnBackFromStudent'),
+  txtAdminPassword: $('txtAdminPassword'),
+  txtStudentIdLogin: $('txtStudentIdLogin'),
+  txtStudentDobLogin: $('txtStudentDobLogin'),
+  txtStudentPassword: $('txtStudentPassword'),
+  loginColorSection: $('loginColorSection'),
+  colorGrid: $('colorGrid'),
+  loginMessage: $('loginMessage'),
+  userProfileBadge: $('userProfileBadge'),
+  myAvatar: $('myAvatar'),
+  myUsername: $('myUsername'),
+  myAdminCrown: $('myAdminCrown'),
+  btnLogout: $('btnLogout'),
+  presenceBar: $('presenceBar'),
+  avatarGroup: $('avatarGroup'),
+  typingBanner: $('typingBanner'),
+  typingBannerText: $('typingBannerText'),
+  wsStatus: $('wsStatus'),
+  wsStatusText: $('wsStatusText'),
+  fileTabs: $('fileTabs'),
+  btnAddFile: $('btnAddFile'),
+  tabCountLabel: $('tabCountLabel'),
+  currentFileTag: $('currentFileTag'),
+  currentLanguageBadge: $('currentLanguageBadge'),
+  btnRunCode: $('btnRunCode'),
+  runButtonLabel: $('runButtonLabel'),
+  btnCopyCode: $('btnCopyCode'),
+  btnSaveSnapshot: $('btnSaveSnapshot'),
+  outputDrawer: $('outputDrawer'),
+  programInput: $('programInput'),
+  btnClearProgramInput: $('btnClearProgramInput'),
+  consoleOutput: $('consoleOutput'),
+  execTimeTag: $('execTimeTag'),
+  btnClearOutput: $('btnClearOutput'),
+  btnToggleOutput: $('btnToggleOutput'),
+  iconDrawerChevron: $('iconDrawerChevron'),
+  btnSettings: $('btnSettings'),
+  settingsButtonLabel: $('settingsButtonLabel'),
+  dlgAdminSettings: $('dlgAdminSettings'),
+  btnCloseAdminSettings: $('btnCloseAdminSettings'),
+  txtAdminDisplayName: $('txtAdminDisplayName'),
+  btnSaveAdminName: $('btnSaveAdminName'),
+  adminNameMessage: $('adminNameMessage'),
+  frmAddStudent: $('frmAddStudent'),
+  txtNewStudentName: $('txtNewStudentName'),
+  txtNewStudentId: $('txtNewStudentId'),
+  txtNewStudentDob: $('txtNewStudentDob'),
+  txtNewStudentInfo: $('txtNewStudentInfo'),
+  studentRecordMessage: $('studentRecordMessage'),
+  studentRecordsList: $('studentRecordsList'),
+  numTabLimit: $('numTabLimit'),
+  btnSaveTabLimit: $('btnSaveTabLimit'),
+  tabLimitMessage: $('tabLimitMessage'),
+  adminGlobalAccessList: $('adminGlobalAccessList'),
+  dlgStudentSettings: $('dlgStudentSettings'),
+  btnCloseStudentSettings: $('btnCloseStudentSettings'),
+  studentCodeAccessList: $('studentCodeAccessList'),
+  dlgNewFile: $('dlgNewFile'),
+  btnCloseNewFile: $('btnCloseNewFile'),
+  frmNewFile: $('frmNewFile'),
+  txtNewFileName: $('txtNewFileName'),
+  selNewFileLanguage: $('selNewFileLanguage'),
+  newFileMessage: $('newFileMessage'),
+  dlgSnapshots: $('dlgSnapshots'),
+  btnSnapshots: $('btnSnapshots'),
+  btnCloseSnapshots: $('btnCloseSnapshots'),
+  snapshotsList: $('snapshotsList'),
+  toastContainer: $('toastContainer'),
+  chatSidebar: $('chatSidebar'),
+  chatResizeHandle: $('chatResizeHandle'),
+  btnToggleChatBar: $('btnToggleChatBar'),
+  btnCollapseChat: $('btnCollapseChat'),
+  btnMinimizeChat: $('btnMinimizeChat'),
+  chatUnreadBadge: $('chatUnreadBadge'),
+  tabGroupChat: $('tabGroupChat'),
+  tabPrivateChat: $('tabPrivateChat'),
+  dmSubSidebar: $('dmSubSidebar'),
+  dmConversationsList: $('dmConversationsList'),
+  btnNewDm: $('btnNewDm'),
+  dmSelectorBox: $('dmSelectorBox'),
+  selDmRecipient: $('selDmRecipient'),
+  dmConversationHeader: $('dmConversationHeader'),
+  btnBackToDmList: $('btnBackToDmList'),
+  dmActiveAvatar: $('dmActiveAvatar'),
+  dmActiveName: $('dmActiveName'),
+  dmActiveStatus: $('dmActiveStatus'),
+  chatMessagesContainer: $('chatMessagesContainer'),
+  frmChat: $('frmChat'),
+  txtChatMessage: $('txtChatMessage'),
+  btnAttachFile: $('btnAttachFile'),
+};
 
-const lanBadge = document.getElementById('lanBadge');
-const lanIpText = document.getElementById('lanIpText');
-const btnShowQr = document.getElementById('btnShowQr');
-const dlgQr = document.getElementById('dlgQr');
-const imgQrCode = document.getElementById('imgQrCode');
-const txtLanUrl = document.getElementById('txtLanUrl');
-const btnCopyLanUrl = document.getElementById('btnCopyLanUrl');
-const btnCloseQr = document.getElementById('btnCloseQr');
+let currentFontSize = 15;
+let isChatCollapsed = localStorage.getItem('chat_collapsed') === 'true';
+let isChatMinimized = localStorage.getItem('chat_minimized') === 'true';
 
-const dlgLogin = document.getElementById('dlgLogin');
-const frmLogin = document.getElementById('frmLogin');
-const selUsername = document.getElementById('selUsername');
-const colorGrid = document.getElementById('colorGrid');
-const btnSubmitLogin = document.getElementById('btnSubmitLogin');
-
-const userProfileBadge = document.getElementById('userProfileBadge');
-const myAvatar = document.getElementById('myAvatar');
-const myUsername = document.getElementById('myUsername');
-const btnSwitchUser = document.getElementById('btnSwitchUser');
-
-const presenceBar = document.getElementById('presenceBar');
-const avatarGroup = document.getElementById('avatarGroup');
-
-const typingBanner = document.getElementById('typingBanner');
-const typingBannerText = document.getElementById('typingBannerText');
-
-const wsStatus = document.getElementById('wsStatus');
-const wsStatusText = document.getElementById('wsStatusText');
-
-const btnRunCode = document.getElementById('btnRunCode');
-const btnCopyCode = document.getElementById('btnCopyCode');
-const btnSaveSnapshot = document.getElementById('btnSaveSnapshot');
-
-const outputDrawer = document.getElementById('outputDrawer');
-const consoleOutput = document.getElementById('consoleOutput');
-const execTimeTag = document.getElementById('execTimeTag');
-const btnClearOutput = document.getElementById('btnClearOutput');
-const btnToggleOutput = document.getElementById('btnToggleOutput');
-const iconDrawerChevron = document.getElementById('iconDrawerChevron');
-
-const btnAdmin = document.getElementById('btnAdmin');
-const dlgAdmin = document.getElementById('dlgAdmin');
-const btnCloseAdmin = document.getElementById('btnCloseAdmin');
-const adminAuthSec = document.getElementById('adminAuthSec');
-const adminContentSec = document.getElementById('adminContentSec');
-const txtAdminPin = document.getElementById('txtAdminPin');
-const btnVerifyPin = document.getElementById('btnVerifyPin');
-const txtAllowedUsers = document.getElementById('txtAllowedUsers');
-const btnSaveAdminUsers = document.getElementById('btnSaveAdminUsers');
-const lstActiveAdmin = document.getElementById('lstActiveAdmin');
-
-const btnSnapshots = document.getElementById('btnSnapshots');
-const dlgSnapshots = document.getElementById('dlgSnapshots');
-const btnCloseSnapshots = document.getElementById('btnCloseSnapshots');
-const snapshotsList = document.getElementById('snapshotsList');
-
-// Initialize App
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
   lucide.createIcons();
-  initTheme();
-  initCodeMirror();
-  fetchAppInfo();
-  initWebSocket();
+  initializeTheme();
+  initializeEditor();
+  bindInterfaceEvents();
+  restoreChatLayout();
+  syncChatView();
+  initializeWebSocket();
+  await fetchAppInfo();
+  await restoreSession();
 });
 
-// Theme Management
-function initTheme() {
-  const savedTheme = localStorage.getItem('editor_theme') || 'dark';
-  setTheme(savedTheme);
+function initializeTheme() {
+  setTheme(localStorage.getItem('editor_theme') || 'dark');
 }
 
 function setTheme(theme) {
   body.setAttribute('data-theme', theme);
   localStorage.setItem('editor_theme', theme);
-  if (theme === 'dark') {
-    iconMoon.style.display = 'block';
-    iconSun.style.display = 'none';
-    if (editor) editor.setOption('theme', 'dracula');
-  } else {
-    iconMoon.style.display = 'none';
-    iconSun.style.display = 'block';
-    if (editor) editor.setOption('theme', 'eclipse');
+  const dark = theme === 'dark';
+  elements.iconMoon.style.display = dark ? 'block' : 'none';
+  elements.iconSun.style.display = dark ? 'none' : 'block';
+  if (state.editor) {
+    state.editor.setOption('theme', dark ? 'dracula' : 'eclipse');
   }
 }
 
-btnThemeToggle.addEventListener('click', () => {
-  const current = body.getAttribute('data-theme');
-  setTheme(current === 'dark' ? 'light' : 'dark');
-});
-
-// Font Size Management
 function setFontSize(size) {
   currentFontSize = Math.min(Math.max(size, 12), 28);
-  lblFontSize.textContent = `${currentFontSize}px`;
-  const cmEl = document.querySelector('.CodeMirror');
-  if (cmEl) cmEl.style.fontSize = `${currentFontSize}px`;
-  if (editor) editor.refresh();
+  elements.lblFontSize.textContent = `${currentFontSize}px`;
+  const editorElement = document.querySelector('.CodeMirror');
+  if (editorElement) editorElement.style.fontSize = `${currentFontSize}px`;
+  state.editor?.refresh();
 }
 
-btnFontInc.addEventListener('click', () => setFontSize(currentFontSize + 1));
-btnFontDec.addEventListener('click', () => setFontSize(currentFontSize - 1));
-
-// CodeMirror Setup
-function initCodeMirror() {
-  const textarea = document.getElementById('codeEditor');
-  editor = CodeMirror.fromTextArea(textarea, {
+function initializeEditor() {
+  state.editor = CodeMirror.fromTextArea($('codeEditor'), {
     mode: 'python',
     theme: body.getAttribute('data-theme') === 'dark' ? 'dracula' : 'eclipse',
     lineNumbers: true,
@@ -137,347 +197,427 @@ function initCodeMirror() {
     tabSize: 4,
     indentWithTabs: false,
     extraKeys: {
-      "Tab": function(cm) {
-        if (cm.somethingSelected()) {
-          cm.indentSelection("add");
-        } else {
-          cm.replaceSelection("    ", "end");
-        }
-      }
-    }
+      Tab(cm) {
+        if (cm.somethingSelected()) cm.indentSelection('add');
+        else cm.replaceSelection('    ', 'end');
+      },
+    },
   });
-
   setFontSize(15);
 
-  // Line Creator Hover Tooltip
   const creatorTooltip = document.createElement('div');
   creatorTooltip.className = 'creator-tooltip';
   creatorTooltip.style.display = 'none';
   document.body.appendChild(creatorTooltip);
 
-  // Read-Only Line Permissions Enforcement
-  editor.on('beforeChange', (cm, changeObj) => {
-    if (isRemoteChange || changeObj.origin === 'remote') return;
-    if (permissionMode === 'open') return; // Open Editing Mode allows all!
-    
-    const startLine = changeObj.from.line;
-    const endLine = changeObj.to.line;
-    const isLecturer = currentUser && currentUser.trim().toLowerCase() === 'lecturer';
-    
-    if (!isLecturer) {
-      for (let l = startLine; l <= endLine; l++) {
-        const lineText = cm.getLine(l) || '';
-        if (lineText.trim() === '') continue; // Unclaimed blank line!
-
-        const info = lineAuthors[String(l)];
-        if (info && info.author && info.author.trim().toLowerCase() !== (currentUser || '').trim().toLowerCase()) {
-          changeObj.cancel();
-          showPermissionWarning(`Line ${l + 1} was created by ${info.author} and is read-only. Only ${info.author} or Lecturer can edit it.`);
-          return;
-        }
-      }
+  state.editor.on('beforeChange', (cm, change) => {
+    if (state.isRemoteChange || change.origin === 'remote') return;
+    if (!state.joined || !state.activeFileId) {
+      change.cancel();
+      showToast('Please log in before editing.', 'error');
+      return;
     }
+
+    const blockedLine = firstBlockedLine(change.from.line, change.to.line);
+    if (blockedLine === null) return;
+
+    const isEnterOnly = (
+      change.from.line === change.to.line
+      && change.from.ch === change.to.ch
+      && Array.isArray(change.text)
+      && change.text.length > 1
+      && change.text.every((part) => part.trim() === '')
+    );
+
+    change.cancel();
+    if (isEnterOnly) {
+      sendWsMessage({
+        type: 'insert_lines',
+        file_id: state.activeFileId,
+        after_line: blockedLine,
+        count: change.text.length - 1,
+      });
+      return;
+    }
+    showToast('This line is read-only. Press Enter to create a line beneath it.', 'error');
   });
 
-  // Editor events
-  editor.on('change', (cm, changeObj) => {
-    if (isRemoteChange || changeObj.origin === 'remote') return;
-    
-    let c = changeObj;
-    while (c) {
+  state.editor.on('change', (cm, change) => {
+    if (state.isRemoteChange || change.origin === 'remote') return;
+    const activeFile = getActiveFile();
+    if (!activeFile) return;
+
+    let currentChange = change;
+    while (currentChange) {
       sendWsMessage({
         type: 'code_delta',
-        from: c.from,
-        to: c.to,
-        text: c.text
+        file_id: activeFile.id,
+        from: currentChange.from,
+        to: currentChange.to,
+        text: currentChange.text,
+        revision: activeFile.revision,
       });
-      c = c.next;
+      currentChange = currentChange.next;
     }
-    handleTyping();
+    activeFile.code = cm.getValue();
+    handleLocalTyping();
   });
 
-  // Hover Tooltip listener showing "Created by: <creator>"
-  editor.getWrapperElement().addEventListener('mousemove', (e) => {
-    const coords = editor.coordsChar({ left: e.clientX, top: e.clientY });
-    if (!coords || coords.line === undefined) {
+  state.editor.on('cursorActivity', (cm) => {
+    if (state.isRemoteChange || !state.joined || !state.activeFileId) return;
+    sendWsMessage({
+      type: 'cursor_change',
+      file_id: state.activeFileId,
+      cursor: cm.getCursor(),
+    });
+  });
+
+  state.editor.getWrapperElement().addEventListener('mousemove', (event) => {
+    const coordinates = state.editor.coordsChar({ left: event.clientX, top: event.clientY });
+    const info = getActiveLineAuthors()[String(coordinates.line)];
+    if (!info?.author) {
       creatorTooltip.style.display = 'none';
       return;
     }
-    const line = coords.line;
-    const info = lineAuthors[String(line)];
-    if (info && info.author) {
-      creatorTooltip.style.left = `${e.clientX + 14}px`;
-      creatorTooltip.style.top = `${e.clientY + 14}px`;
-      creatorTooltip.innerHTML = `Created by: <strong style="color:${info.color || '#38BDF8'}">${escapeHtml(info.author)}</strong>`;
-      creatorTooltip.style.display = 'block';
-    } else {
-      creatorTooltip.style.display = 'none';
-    }
+    creatorTooltip.replaceChildren();
+    creatorTooltip.append('Created by: ');
+    const owner = document.createElement('strong');
+    owner.textContent = `${info.author}${info.account_id === 'admin' ? ' ♛' : ''}`;
+    owner.style.color = safeColor(info.color);
+    creatorTooltip.appendChild(owner);
+    creatorTooltip.style.left = `${event.clientX + 14}px`;
+    creatorTooltip.style.top = `${event.clientY + 14}px`;
+    creatorTooltip.style.display = 'block';
   });
 
-  editor.getWrapperElement().addEventListener('mouseleave', () => {
+  state.editor.getWrapperElement().addEventListener('mouseleave', () => {
     creatorTooltip.style.display = 'none';
-  });
-
-  editor.on('cursorActivity', (cm) => {
-    if (isRemoteChange) return;
-    const doc = cm.getDoc();
-    const cursor = doc.getCursor();
-    const selection = {
-      anchor: doc.getCursor('anchor'),
-      head: doc.getCursor('head')
-    };
-    sendWsMessage({
-      type: 'cursor_change',
-      cursor: cursor,
-      selection: selection
-    });
   });
 }
 
-function handleTyping() {
-  sendWsMessage({ type: 'typing', is_typing: true });
-  const curLine = editor.getCursor().line;
-  sendWsMessage({ type: 'typing_line', line: curLine, is_typing: true });
+function firstBlockedLine(startLine, endLine) {
+  if (state.user?.role === 'admin' || state.globalEditor) return null;
+  const authors = getActiveLineAuthors();
+  for (let line = startLine; line <= endLine; line += 1) {
+    const lineText = state.editor.getLine(line) || '';
+    if (!lineText.trim()) continue;
+    const ownerId = authors[String(line)]?.account_id;
+    if (!ownerId || ownerId === state.user?.account_id) continue;
+    if (state.editableOwnerIds.has(ownerId)) continue;
+    return line;
+  }
+  return null;
+}
 
-  clearTimeout(typingTimeout);
-  typingTimeout = setTimeout(() => {
+function handleLocalTyping() {
+  const line = state.editor.getCursor().line;
+  sendWsMessage({ type: 'typing', is_typing: true });
+  sendWsMessage({
+    type: 'typing_line',
+    file_id: state.activeFileId,
+    line,
+    is_typing: true,
+  });
+  clearTimeout(state.typingTimeout);
+  state.typingTimeout = setTimeout(() => {
     sendWsMessage({ type: 'typing', is_typing: false });
-    sendWsMessage({ type: 'typing_line', line: curLine, is_typing: false });
+    sendWsMessage({
+      type: 'typing_line',
+      file_id: state.activeFileId,
+      line,
+      is_typing: false,
+    });
   }, 1200);
 }
 
-// Network Info
 async function fetchAppInfo() {
   try {
-    const res = await fetch('/api/info');
-    const data = await res.json();
-    
-    lanIpText.textContent = `${data.ip}:${data.port}`;
-    txtLanUrl.value = data.lan_url;
-    imgQrCode.src = data.qr_code;
-    palette = data.palette || [];
-    claimedColors = data.claimed_colors || {};
-    
-    populateAllowedUsers(data.allowed_users || []);
+    const response = await fetch('/api/info');
+    const info = await response.json();
+    elements.lanIpText.textContent = `${info.ip}:${info.port}`;
+    elements.txtLanUrl.value = info.lan_url;
+    elements.imgQrCode.src = info.qr_code;
+    state.palette = info.palette || [];
+    state.claimedColors = info.claimed_colors || {};
+    state.activeUsers = info.active_users || [];
+    chooseAvailableColor();
     renderColorGrid();
-  } catch (err) {
-    lanIpText.textContent = 'Offline / Localhost';
+    renderPresence();
+  } catch {
+    elements.lanIpText.textContent = 'Offline / Localhost';
   }
 }
 
-let activeUsersList = [];
+async function restoreSession() {
+  if (!state.authToken) {
+    showLoginDialog();
+    return;
+  }
+  try {
+    const response = await authorizedFetch('/api/auth/me');
+    if (!response.ok) throw new Error('Session expired');
+    const data = await response.json();
+    state.user = data.user;
+    chooseAvailableColor();
+    updateSignedInUI();
+    tryJoinSocket();
+  } catch {
+    clearAuthentication();
+    showLoginDialog();
+  }
+}
 
-const customUsernameGroup = document.getElementById('customUsernameGroup');
-const txtCustomUsername = document.getElementById('txtCustomUsername');
+function showLoginDialog() {
+  resetLoginChoice();
+  if (!elements.dlgLogin.open) elements.dlgLogin.showModal();
+}
 
-function populateAllowedUsers(allowedUsers) {
-  const selectedVal = selUsername.value;
-  selUsername.innerHTML = '<option value="" disabled selected>-- Choose your name --</option>';
-  
-  const activeUsernames = activeUsersList.map(u => u.username ? u.username.toLowerCase() : '');
+function resetLoginChoice() {
+  elements.loginRoleSelection.style.display = 'grid';
+  elements.frmAdminLogin.style.display = 'none';
+  elements.frmStudentLogin.style.display = 'none';
+  elements.loginColorSection.style.display = 'none';
+  elements.loginSubtitle.textContent = 'Choose how you want to sign in.';
+  setMessage(elements.loginMessage, '');
+}
 
-  allowedUsers.forEach(user => {
-    const isTaken = activeUsernames.includes(user.toLowerCase()) && user !== currentUser;
-    const opt = document.createElement('option');
-    opt.value = user;
-    opt.textContent = isTaken ? `${user} (Currently Logged In)` : user;
-    if (isTaken) opt.disabled = true;
-    selUsername.appendChild(opt);
-  });
+function selectLoginRole(role) {
+  elements.loginRoleSelection.style.display = 'none';
+  elements.frmAdminLogin.style.display = role === 'admin' ? 'block' : 'none';
+  elements.frmStudentLogin.style.display = role === 'student' ? 'block' : 'none';
+  elements.loginColorSection.style.display = 'block';
+  elements.loginSubtitle.textContent = role === 'admin'
+    ? 'Enter the Admin password and choose a cursor color.'
+    : 'Enter your saved student details. Your name will be loaded automatically.';
+  setMessage(elements.loginMessage, '');
+  renderColorGrid();
+  if (role === 'admin') elements.txtAdminPassword.focus();
+  else elements.txtStudentIdLogin.focus();
+}
 
-  // Guest / Custom Name option
-  const guestOpt = document.createElement('option');
-  guestOpt.value = '__custom__';
-  guestOpt.textContent = '✨ Other / Join as Guest (Type Name)...';
-  selUsername.appendChild(guestOpt);
-
-  if (selectedVal) {
-    selUsername.value = selectedVal;
+function chooseAvailableColor() {
+  const available = state.palette.find(
+    (color) => !state.claimedColors[color] || state.claimedColors[color] === state.user?.username,
+  );
+  if (!state.color || !state.palette.includes(state.color) || (
+    state.claimedColors[state.color]
+    && state.claimedColors[state.color] !== state.user?.username
+  )) {
+    state.color = available || state.palette[0] || '#2196F3';
   }
 }
 
 function renderColorGrid() {
-  colorGrid.innerHTML = '';
-  palette.forEach(color => {
-    const isClaimed = claimedColors[color] && claimedColors[color] !== currentUser;
-    const box = document.createElement('div');
-    box.className = `color-option ${isClaimed ? 'claimed' : ''} ${currentColor === color ? 'selected' : ''}`;
-    box.style.backgroundColor = color;
-    box.title = isClaimed ? `Claimed by ${claimedColors[color]}` : color;
-
-    if (!isClaimed) {
-      box.addEventListener('click', () => {
-        document.querySelectorAll('.color-option').forEach(el => el.classList.remove('selected'));
-        box.classList.add('selected');
-        currentColor = color;
-        checkLoginValidity();
-      });
-    }
-
-    colorGrid.appendChild(box);
+  elements.colorGrid.replaceChildren();
+  state.palette.forEach((color) => {
+    const claimedBy = state.claimedColors[color];
+    const claimed = Boolean(claimedBy && claimedBy !== state.user?.username);
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `color-option${claimed ? ' claimed' : ''}${state.color === color ? ' selected' : ''}`;
+    button.style.backgroundColor = color;
+    button.title = claimed ? `Used by ${claimedBy}` : `Choose ${color}`;
+    button.disabled = claimed;
+    button.setAttribute('aria-label', button.title);
+    button.addEventListener('click', () => {
+      state.color = color;
+      localStorage.setItem('live_editor_color', color);
+      renderColorGrid();
+    });
+    elements.colorGrid.appendChild(button);
   });
 }
 
-selUsername.addEventListener('change', () => {
-  if (selUsername.value === '__custom__') {
-    customUsernameGroup.style.display = 'block';
-    txtCustomUsername.focus();
-  } else {
-    customUsernameGroup.style.display = 'none';
+async function submitLogin(role, credentials) {
+  if (!state.color) {
+    setMessage(elements.loginMessage, 'Choose a cursor color.', 'error');
+    return;
   }
-  checkLoginValidity();
-});
-
-txtCustomUsername.addEventListener('input', checkLoginValidity);
-
-function getEnteredUsername() {
-  if (selUsername.value === '__custom__') {
-    return txtCustomUsername.value.trim();
+  setMessage(elements.loginMessage, 'Checking your details...', 'success');
+  try {
+    const response = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ role, ...credentials }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || 'Unable to log in.');
+    state.authToken = data.token;
+    state.user = data.user;
+    localStorage.setItem('live_editor_auth_token', state.authToken);
+    localStorage.setItem('live_editor_color', state.color);
+    updateSignedInUI();
+    setMessage(elements.loginMessage, 'Login successful. Joining the live editor...', 'success');
+    tryJoinSocket();
+  } catch (error) {
+    setMessage(elements.loginMessage, error.message, 'error');
   }
-  return selUsername.value.trim();
 }
 
-function checkLoginValidity() {
-  const enteredName = getEnteredUsername();
-  const activeUsernames = activeUsersList.map(u => u.username ? u.username.toLowerCase() : '');
-  const isTaken = activeUsernames.includes(enteredName.toLowerCase()) && enteredName.toLowerCase() !== (currentUser || '').toLowerCase();
-  
-  const hasUser = enteredName.length > 0 && !isTaken;
-  const hasColor = currentColor !== null;
-  
-  btnSubmitLogin.disabled = !(hasUser && hasColor);
+function updateSignedInUI() {
+  if (!state.user) return;
+  elements.userProfileBadge.style.display = 'flex';
+  elements.myAvatar.textContent = state.user.username.charAt(0).toUpperCase();
+  elements.myAvatar.style.backgroundColor = safeColor(state.color);
+  elements.myUsername.textContent = state.user.username;
+  elements.myAdminCrown.style.display = state.user.role === 'admin' ? 'inline' : 'none';
+  elements.btnSettings.style.display = 'inline-flex';
+  elements.settingsButtonLabel.textContent = state.user.role === 'admin' ? 'Admin Settings' : 'Your Code Access';
+  elements.btnAddFile.style.display = state.user.role === 'admin' ? 'inline-flex' : 'none';
+  renderFileTabs();
 }
 
-frmLogin.addEventListener('submit', (e) => {
-  e.preventDefault();
-  const enteredName = getEnteredUsername();
-  if (!enteredName || !currentColor) return;
+function clearAuthentication() {
+  state.authToken = '';
+  state.user = null;
+  state.joined = false;
+  state.editableOwnerIds = new Set();
+  state.globalEditor = false;
+  localStorage.removeItem('live_editor_auth_token');
+}
 
-  currentUser = enteredName;
+async function logout() {
+  try {
+    if (state.authToken) {
+      await authorizedFetch('/api/auth/logout', { method: 'POST' });
+    }
+  } finally {
+    clearAuthentication();
+    localStorage.removeItem('live_editor_color');
+    if (state.socket) state.socket.close();
+    window.location.reload();
+  }
+}
 
-  // Send Join over WebSocket
+function initializeWebSocket() {
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  state.socket = new WebSocket(`${protocol}//${window.location.host}/ws/${state.clientId}`);
+  setSocketStatus('Connecting...', false);
+
+  state.socket.addEventListener('open', () => {
+    state.socketReady = true;
+    setSocketStatus('Connected', true);
+    tryJoinSocket();
+  });
+
+  state.socket.addEventListener('message', (event) => {
+    try {
+      handleWsMessage(JSON.parse(event.data));
+    } catch (error) {
+      console.error('Invalid server message:', error);
+    }
+  });
+
+  state.socket.addEventListener('close', () => {
+    state.socketReady = false;
+    state.joined = false;
+    setSocketStatus('Reconnecting...', false);
+    setTimeout(initializeWebSocket, 2000);
+  });
+
+  state.socket.addEventListener('error', () => {
+    setSocketStatus('Connection error', false);
+  });
+}
+
+function setSocketStatus(text, connected) {
+  elements.wsStatusText.textContent = text;
+  elements.wsStatus.classList.toggle('connected', connected);
+  elements.chatSidebar.classList.toggle('socket-offline', !connected);
+}
+
+function tryJoinSocket() {
+  if (!state.socketReady || !state.authToken || !state.user || !state.color || state.joined) return;
   sendWsMessage({
     type: 'join',
-    username: currentUser,
-    color: currentColor
+    token: state.authToken,
+    color: state.color,
   });
-
-  // Update UI Profile
-  myAvatar.style.backgroundColor = currentColor;
-  myAvatar.textContent = currentUser.charAt(0).toUpperCase();
-  myUsername.textContent = currentUser;
-  userProfileBadge.style.display = 'flex';
-  updatePermissionModeUI();
-
-  dlgLogin.close();
-});
-
-btnSwitchUser.addEventListener('click', () => {
-  dlgLogin.showModal();
-});
-
-// WebSocket Sync
-function initWebSocket() {
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsUrl = `${protocol}//${window.location.host}/ws/${clientId}`;
-
-  socket = new WebSocket(wsUrl);
-
-  socket.onopen = () => {
-    wsStatus.className = 'status-indicator connected';
-    wsStatusText.textContent = 'Connected';
-  };
-
-  socket.onmessage = (event) => {
-    const data = JSON.parse(event.data);
-    handleWsMessage(data);
-  };
-
-  socket.onclose = () => {
-    wsStatus.className = 'status-indicator';
-    wsStatusText.textContent = 'Reconnecting...';
-    setTimeout(initWebSocket, 2000);
-  };
-
-  socket.onerror = (err) => {
-    console.error('WS Error:', err);
-  };
 }
 
-function sendWsMessage(msg) {
-  if (socket && socket.readyState === WebSocket.OPEN) {
-    socket.send(JSON.stringify(msg));
+function sendWsMessage(message) {
+  if (state.socket?.readyState === WebSocket.OPEN) {
+    state.socket.send(JSON.stringify(message));
   }
 }
 
 function handleWsMessage(data) {
   switch (data.type) {
     case 'init':
-      if (data.line_authors) lineAuthors = data.line_authors;
-      if (data.permission_mode) permissionMode = data.permission_mode;
-      updatePermissionModeUI();
-      if (data.code !== undefined && editor.getValue() !== data.code) {
-        isRemoteChange = true;
-        editor.setValue(data.code);
-        isRemoteChange = false;
-      }
-      claimedColors = data.claimed_colors || {};
-      palette = data.palette || palette;
-      if (data.allowed_users) populateAllowedUsers(data.allowed_users);
+      applyWorkspace(data.workspace, data.line_authors);
+      state.palette = data.palette || state.palette;
+      state.claimedColors = data.claimed_colors || {};
+      state.activeUsers = data.active_users || [];
+      state.students = data.students || [];
+      chooseAvailableColor();
       renderColorGrid();
-      updatePresenceList(data.active_users || []);
-
-      // Show login dialog if user not set
-      if (!currentUser) {
-        dlgLogin.showModal();
-      }
+      renderPresence();
+      tryJoinSocket();
       break;
 
-    case 'permission_mode_updated':
-      permissionMode = data.permission_mode || 'restricted';
-      updatePermissionModeUI();
+    case 'join_success':
+      state.joined = true;
+      state.user = { ...state.user, ...data.user };
+      state.chatHistory = data.messages || [];
+      state.students = data.students || state.students;
+      updateSignedInUI();
+      renderPresence();
+      renderChatMessages();
+      renderDmConversations();
+      updateDmRecipientDropdown();
+      loadAccessSettings();
+      if (elements.dlgLogin.open) elements.dlgLogin.close();
+      showToast(`Welcome, ${state.user.username}${state.user.role === 'admin' ? ' ♛' : ''}.`, 'success');
       break;
 
+    case 'presence_updated':
     case 'user_joined':
-      claimedColors = data.claimed_colors || {};
+    case 'user_left':
+      state.activeUsers = data.active_users || [];
+      state.claimedColors = data.claimed_colors || {};
+      state.students = data.students || state.students;
+      renderPresence();
       renderColorGrid();
-      updatePresenceList(data.active_users || []);
+      updateDmRecipientDropdown();
+      renderDmConversations();
+      syncChatView();
+      if (isSettingsDialogOpen()) loadAccessSettings();
       break;
 
-    case 'user_left':
-      claimedColors = data.claimed_colors || {};
-      renderColorGrid();
-      updatePresenceList(data.active_users || []);
-      removeRemoteCursor(data.id);
+    case 'student_records_updated':
+      state.students = data.students || [];
+      if (data.active_users) state.activeUsers = data.active_users;
+      updateDmRecipientDropdown();
+      renderPresence();
+      if (elements.dlgAdminSettings.open) {
+        loadAdminStudents();
+        loadAccessSettings();
+      }
+      if (elements.dlgStudentSettings.open) loadAccessSettings();
+      break;
+
+    case 'workspace_updated':
+      applyWorkspace(data.workspace, data.line_authors);
+      if (data.requester_id === state.clientId && data.created_file_id) {
+        switchFile(data.created_file_id);
+        if (elements.dlgNewFile.open) elements.dlgNewFile.close();
+      }
       break;
 
     case 'code_delta':
-      if (data.line_authors) lineAuthors = data.line_authors;
-      if (!data.from || !data.to || !data.text) break;
-      isRemoteChange = true;
-      editor.operation(() => {
-        editor.replaceRange(data.text, data.from, data.to, 'remote');
-      });
-      isRemoteChange = false;
+      applyRemoteDelta(data);
+      break;
+
+    case 'file_state':
+      applyAuthoritativeFile(data);
       break;
 
     case 'permission_denied':
-      showPermissionWarning(data.message || 'Permission denied: This line is read-only.');
-      break;
-
-    case 'typing_line_update':
-      handleRemoteLineTyping(data);
-      break;
-
-    case 'code_update':
-      isRemoteChange = true;
-      const scrollInfo = editor.getScrollInfo();
-      const cursor = editor.getCursor();
-      editor.setValue(data.code);
-      editor.scrollTo(scrollInfo.left, scrollInfo.top);
-      editor.setCursor(cursor);
-      isRemoteChange = false;
+      showToast(data.message || 'This code is read-only.', 'error');
+      if (data.file) applyAuthoritativeFile({
+        file: data.file,
+        line_authors: data.line_authors,
+      });
       break;
 
     case 'cursor_update':
@@ -485,841 +625,1248 @@ function handleWsMessage(data) {
       break;
 
     case 'typing_update':
-      updateTypingBanner(data);
+      updateTypingState(data);
       break;
 
-    case 'allowed_users_updated':
-      populateAllowedUsers(data.allowed_users);
+    case 'typing_line_update':
+      updateRemoteLineHighlight(data);
       break;
 
     case 'chat_history':
-      chatHistoryList = data.messages || [];
-      renderDmConversationsList();
+      state.chatHistory = data.messages || [];
       renderChatMessages();
+      renderDmConversations();
       break;
 
     case 'chat_message':
-      if (data.message) {
-        chatHistoryList.push(data.message);
-        renderDmConversationsList();
-        renderChatMessages();
-        const isFromOther = data.message.sender !== currentUser;
-        
-        if (isFromOther && data.message.target !== 'group') {
-          // Show floating DM toast notification
-          showDmNotification(data.message);
-          
-          if (isChatCollapsed || currentChatTab !== 'private' || activeDmRecipient !== data.message.sender) {
-            unreadCount++;
-            updateUnreadBadge();
-          } else {
-            // Automatically mark read if currently chatting with this user
-            sendWsMessage({ type: 'mark_read', target: data.message.sender });
-          }
-        } else if (isFromOther && isChatCollapsed) {
-          unreadCount++;
-          updateUnreadBadge();
-        }
-      }
+      receiveChatMessage(data.message);
       break;
 
-    case 'snapshot_created':
-      // Flash snapshot notification
+    case 'account_name_updated':
+      applyAccountNameUpdate(data);
+      break;
+
+    case 'access_updated':
+      loadAccessSettings();
+      break;
+
+    case 'auth_error':
+      showToast(data.message || 'Authentication failed.', 'error');
+      clearAuthentication();
+      showLoginDialog();
       break;
 
     case 'error':
-      alert(data.message);
+      showToast(data.message || 'Something went wrong.', 'error');
+      setMessage(elements.newFileMessage, data.message || '', 'error');
+      break;
+
+    default:
       break;
   }
 }
 
-let permissionMode = 'restricted';
-const btnTogglePermissionMode = document.getElementById('btnTogglePermissionMode');
-const lblPermMode = document.getElementById('lblPermMode');
-const iconPermLock = document.getElementById('iconPermLock');
-const iconPermUnlock = document.getElementById('iconPermUnlock');
-
-function updatePermissionModeUI() {
-  if (!btnTogglePermissionMode) return;
-
-  const isLecturer = currentUser && (currentUser.trim().toLowerCase() === 'lecturer' || currentUser.trim().toLowerCase() === 'admin');
-  if (isLecturer) {
-    btnTogglePermissionMode.style.display = 'inline-flex';
-  } else {
-    btnTogglePermissionMode.style.display = 'none';
+function applyWorkspace(workspace, allLineAuthors) {
+  if (!workspace) return;
+  const previousActive = state.activeFileId;
+  state.files = workspace.files || [];
+  state.tabLimit = workspace.tab_limit || 6;
+  state.lineAuthors = allLineAuthors || state.lineAuthors;
+  if (!state.files.some((file) => file.id === previousActive)) {
+    state.activeFileId = state.files[0]?.id || null;
   }
-
-  if (permissionMode === 'open') {
-    if (lblPermMode) lblPermMode.textContent = 'Open Editing';
-    if (iconPermLock) iconPermLock.style.display = 'none';
-    if (iconPermUnlock) iconPermUnlock.style.display = 'inline-block';
-    btnTogglePermissionMode.classList.add('open-mode');
-  } else {
-    if (lblPermMode) lblPermMode.textContent = 'Restricted';
-    if (iconPermLock) iconPermLock.style.display = 'inline-block';
-    if (iconPermUnlock) iconPermUnlock.style.display = 'none';
-    btnTogglePermissionMode.classList.remove('open-mode');
-  }
+  renderFileTabs();
+  loadActiveFileIntoEditor();
 }
 
-if (btnTogglePermissionMode) {
-  btnTogglePermissionMode.addEventListener('click', () => {
-    const nextMode = permissionMode === 'restricted' ? 'open' : 'restricted';
-    sendWsMessage({ type: 'toggle_permission_mode', mode: nextMode });
-  });
+function getActiveFile() {
+  return state.files.find((file) => file.id === state.activeFileId) || null;
 }
 
-let lineAuthors = {};
-const lineTypingActiveTimeouts = new Map();
-const lineTypingBadges = new Map();
-
-function showPermissionWarning(msg) {
-  const container = document.getElementById('toastContainer');
-  if (!container) return;
-
-  const toast = document.createElement('div');
-  toast.className = 'toast-card';
-  toast.style.borderColor = 'var(--danger-color)';
-  toast.innerHTML = `
-    <div class="toast-avatar" style="background-color: var(--danger-color)">🔒</div>
-    <div class="toast-body">
-      <div class="toast-header"><span class="toast-sender" style="color:var(--danger-color)">Read-Only Lock</span></div>
-      <div class="toast-text">${escapeHtml(msg)}</div>
-    </div>
-  `;
-  container.appendChild(toast);
-  setTimeout(() => toast.remove(), 4000);
+function getActiveLineAuthors() {
+  return state.lineAuthors[state.activeFileId] || {};
 }
 
-function hexToRgba(hex, alpha) {
-  if (!hex) return `rgba(56, 189, 248, ${alpha})`;
-  let c = hex.replace('#', '');
-  if (c.length === 3) c = c.split('').map(x => x + x).join('');
-  const num = parseInt(c, 16);
-  return `rgba(${(num >> 16) & 255}, ${(num >> 8) & 255}, ${num & 255}, ${alpha})`;
-}
+function renderFileTabs() {
+  elements.fileTabs.replaceChildren();
+  state.files.forEach((file) => {
+    const tab = document.createElement('button');
+    tab.type = 'button';
+    tab.className = `file-tab${file.id === state.activeFileId ? ' active' : ''}`;
+    tab.setAttribute('role', 'tab');
+    tab.setAttribute('aria-selected', file.id === state.activeFileId ? 'true' : 'false');
 
-function handleRemoteLineTyping(data) {
-  const line = data.line;
-  const user = data.username || 'Student';
-  const color = data.color || '#38BDF8';
-  const key = `${data.id}_${line}`;
+    const languageDot = document.createElement('span');
+    languageDot.className = `file-language-dot ${file.language}`;
+    languageDot.textContent = file.language === 'cpp' ? 'C++' : 'Py';
+    const name = document.createElement('span');
+    name.className = 'file-tab-name';
+    name.textContent = file.name;
+    tab.append(languageDot, name);
+    tab.addEventListener('click', () => switchFile(file.id));
 
-  if (lineTypingActiveTimeouts.has(key)) {
-    clearTimeout(lineTypingActiveTimeouts.get(key));
-    lineTypingActiveTimeouts.delete(key);
-  }
-
-  clearLineTypingHighlight(data.id, line);
-
-  if (data.is_typing) {
-    const rgbaColor = hexToRgba(color, 0.20);
-    editor.addLineClass(line, 'background', `typing-line-bg-${data.id}`);
-
-    const badge = document.createElement('span');
-    badge.className = 'line-typing-badge';
-    badge.style.backgroundColor = color;
-    badge.innerHTML = `${escapeHtml(user)} ✏️`;
-
-    const lineLen = editor.getLine(line) ? editor.getLine(line).length : 0;
-    const widget = editor.setBookmark({ line: line, ch: lineLen }, { widget: badge });
-    lineTypingBadges.set(key, widget);
-
-    const styleId = `style-typing-${data.id}`;
-    let styleEl = document.getElementById(styleId);
-    if (!styleEl) {
-      styleEl = document.createElement('style');
-      styleEl.id = styleId;
-      document.head.appendChild(styleEl);
+    if (state.user?.role === 'admin' && state.files.length > 1) {
+      const close = document.createElement('span');
+      close.className = 'file-tab-close';
+      close.setAttribute('role', 'button');
+      close.setAttribute('aria-label', `Close ${file.name}`);
+      close.textContent = '×';
+      close.addEventListener('click', (event) => {
+        event.stopPropagation();
+        if (confirm(`Close "${file.name}" for everyone?`)) {
+          sendWsMessage({ type: 'delete_file', file_id: file.id });
+        }
+      });
+      tab.appendChild(close);
     }
-    styleEl.innerHTML = `.typing-line-bg-${data.id} { background-color: ${rgbaColor} !important; }`;
-
-    const timeout = setTimeout(() => {
-      clearLineTypingHighlight(data.id, line);
-    }, 1500);
-    lineTypingActiveTimeouts.set(key, timeout);
-  }
-}
-
-function clearLineTypingHighlight(userId, line) {
-  const key = `${userId}_${line}`;
-  editor.removeLineClass(line, 'background', `typing-line-bg-${userId}`);
-  if (lineTypingBadges.has(key)) {
-    const widget = lineTypingBadges.get(key);
-    widget.clear();
-    lineTypingBadges.delete(key);
-  }
-}
-
-// Remote Cursors Rendering
-function renderRemoteCursor(data) {
-  const { id, username, color, cursor } = data;
-  if (!cursor || !username) return;
-
-  removeRemoteCursor(id);
-
-  const cursorEl = document.createElement('div');
-  cursorEl.className = 'remote-cursor';
-  cursorEl.style.borderColor = color;
-
-  const flagEl = document.createElement('div');
-  flagEl.className = 'remote-cursor-flag';
-  flagEl.style.backgroundColor = color;
-  flagEl.textContent = username;
-  cursorEl.appendChild(flagEl);
-
-  const marker = editor.setBookmark({ line: cursor.line, ch: cursor.ch }, {
-    widget: cursorEl,
-    insertLeft: true
+    elements.fileTabs.appendChild(tab);
   });
+  elements.tabCountLabel.textContent = `${state.files.length} / ${state.tabLimit}`;
+  elements.btnAddFile.disabled = state.files.length >= state.tabLimit;
+}
 
-  remoteCursors[id] = marker;
+function switchFile(fileId) {
+  if (!state.files.some((file) => file.id === fileId)) return;
+  const current = getActiveFile();
+  if (current && state.editor && !state.isRemoteChange) {
+    current.code = state.editor.getValue();
+  }
+  state.activeFileId = fileId;
+  clearAllRemoteCursors();
+  renderFileTabs();
+  loadActiveFileIntoEditor();
+  sendWsMessage({
+    type: 'cursor_change',
+    file_id: fileId,
+    cursor: state.editor.getCursor(),
+  });
+}
+
+function loadActiveFileIntoEditor() {
+  const file = getActiveFile();
+  if (!file || !state.editor) return;
+  state.isRemoteChange = true;
+  state.editor.setOption('mode', file.language === 'cpp' ? 'text/x-c++src' : 'python');
+  if (state.editor.getValue() !== file.code) state.editor.setValue(file.code || '');
+  state.isRemoteChange = false;
+  elements.currentFileTag.replaceChildren();
+  const icon = document.createElement('i');
+  icon.setAttribute('data-lucide', 'file-code-2');
+  elements.currentFileTag.append(icon, document.createTextNode(` ${file.name}`));
+  elements.currentLanguageBadge.textContent = file.language === 'cpp' ? 'C++' : 'Python';
+  elements.currentLanguageBadge.className = `language-badge ${file.language}`;
+  elements.runButtonLabel.textContent = file.language === 'cpp' ? 'Compile & Run C++' : 'Run Python';
+  loadProgramInput(file.id);
+  lucide.createIcons();
+  state.editor.refresh();
+}
+
+function programInputStorageKey(fileId) {
+  return `live_editor_program_input_${fileId || 'default'}`;
+}
+
+function loadProgramInput(fileId) {
+  try {
+    elements.programInput.value = localStorage.getItem(programInputStorageKey(fileId)) || '';
+  } catch (_error) {
+    elements.programInput.value = '';
+  }
+}
+
+function saveProgramInput() {
+  try {
+    localStorage.setItem(
+      programInputStorageKey(state.activeFileId),
+      elements.programInput.value,
+    );
+  } catch (_error) {
+    showToast('Program input could not be saved in this browser.', 'error');
+  }
+}
+
+function applyRemoteDelta(data) {
+  const file = state.files.find((item) => item.id === data.file_id);
+  if (!file || !Array.isArray(data.text)) return;
+  const replacement = data.text.join('\n');
+  file.code = applyTextDelta(file.code, data.from, data.to, replacement);
+  file.revision = data.revision ?? file.revision;
+  state.lineAuthors[data.file_id] = data.line_authors || {};
+  if (state.activeFileId !== data.file_id) return;
+  const scroll = state.editor.getScrollInfo();
+  state.isRemoteChange = true;
+  state.editor.replaceRange(replacement, data.from, data.to, 'remote');
+  state.isRemoteChange = false;
+  state.editor.scrollTo(scroll.left, scroll.top);
+}
+
+function applyTextDelta(code, from, to, replacement) {
+  const lines = String(code || '').split('\n');
+  const offsetFor = (position) => {
+    const line = Math.max(0, Math.min(position.line || 0, lines.length - 1));
+    const ch = Math.max(0, Math.min(position.ch || 0, lines[line].length));
+    return lines.slice(0, line).reduce((total, value) => total + value.length + 1, 0) + ch;
+  };
+  const start = offsetFor(from);
+  const end = offsetFor(to);
+  return code.slice(0, start) + replacement + code.slice(end);
+}
+
+function applyAuthoritativeFile(data) {
+  const index = state.files.findIndex((file) => file.id === data.file?.id);
+  if (index === -1) return;
+  state.files[index] = data.file;
+  state.lineAuthors[data.file.id] = data.line_authors || {};
+  if (state.activeFileId !== data.file.id) return;
+  state.isRemoteChange = true;
+  state.editor.setValue(data.file.code || '');
+  state.isRemoteChange = false;
+  if (data.requester_id === state.clientId && Number.isInteger(data.focus_line)) {
+    const line = Math.min(data.focus_line, state.editor.lineCount() - 1);
+    state.editor.setCursor({ line, ch: 0 });
+    state.editor.focus();
+  }
+}
+
+function safeColor(value) {
+  return /^#[0-9A-Fa-f]{6}$/.test(value || '') ? value : '#38BDF8';
+}
+
+function renderRemoteCursor(data) {
+  removeRemoteCursor(data.id);
+  if (!data.cursor || !data.username || data.file_id !== state.activeFileId) return;
+  const cursor = document.createElement('span');
+  cursor.className = 'remote-cursor';
+  cursor.style.borderColor = safeColor(data.color);
+  cursor.classList.toggle('is-typing', state.typingUsers.has(data.id));
+
+  const marker = state.editor.setBookmark(data.cursor, {
+    widget: cursor,
+    insertLeft: true,
+  });
+  state.remoteCursors.set(data.id, {
+    marker,
+    element: cursor,
+    fileId: data.file_id,
+  });
 }
 
 function removeRemoteCursor(id) {
-  if (remoteCursors[id]) {
-    remoteCursors[id].clear();
-    delete remoteCursors[id];
+  const cursor = state.remoteCursors.get(id);
+  if (cursor) {
+    cursor.marker.clear();
+    state.remoteCursors.delete(id);
   }
 }
 
-function updatePresenceList(activeUsers) {
-  activeUsersList = activeUsers || [];
-  avatarGroup.innerHTML = '';
-  lstActiveAdmin.innerHTML = '';
+function clearAllRemoteCursors() {
+  [...state.remoteCursors.keys()].forEach(removeRemoteCursor);
+}
 
-  const label = presenceBar.querySelector('.presence-label');
-  label.textContent = `Active (${activeUsers.length}):`;
+function updateTypingState(data) {
+  if (data.is_typing) state.typingUsers.add(data.id);
+  else state.typingUsers.delete(data.id);
+  const remote = state.remoteCursors.get(data.id);
+  remote?.element.classList.toggle('is-typing', Boolean(data.is_typing));
 
-  activeUsers.forEach(u => {
-    if (!u.username) return;
+  const typingNames = state.activeUsers
+    .filter((user) => state.typingUsers.has(user.id))
+    .map((user) => `${user.username}${user.role === 'admin' ? ' ♛' : ''}`);
+  if (data.is_typing && !typingNames.includes(data.username)) {
+    typingNames.push(`${data.username}${data.role === 'admin' ? ' ♛' : ''}`);
+  }
+  elements.typingBanner.style.display = typingNames.length ? 'flex' : 'none';
+  elements.typingBannerText.textContent = typingNames.length
+    ? `${typingNames.join(', ')} ${typingNames.length === 1 ? 'is' : 'are'} editing...`
+    : '';
+}
+
+function updateRemoteLineHighlight(data) {
+  if (data.file_id !== state.activeFileId) return;
+  const safeId = String(data.id).replace(/[^A-Za-z0-9_-]/g, '_');
+  const key = `${safeId}_${data.file_id}_${data.line}`;
+  const className = `typing-line-${safeId}`;
+  clearTimeout(state.lineTypingTimeouts.get(key));
+  state.editor.removeLineClass(data.line, 'background', className);
+
+  if (!data.is_typing) return;
+  let style = document.getElementById(`typing-style-${safeId}`);
+  if (!style) {
+    style = document.createElement('style');
+    style.id = `typing-style-${safeId}`;
+    document.head.appendChild(style);
+  }
+  style.textContent = `.${className} { background-color: ${hexToRgba(safeColor(data.color), 0.20)} !important; }`;
+  state.editor.addLineClass(data.line, 'background', className);
+  state.lineTypingTimeouts.set(key, setTimeout(() => {
+    state.editor.removeLineClass(data.line, 'background', className);
+    state.lineTypingTimeouts.delete(key);
+  }, 1500));
+}
+
+function hexToRgba(hex, alpha) {
+  const number = parseInt(hex.slice(1), 16);
+  return `rgba(${(number >> 16) & 255}, ${(number >> 8) & 255}, ${number & 255}, ${alpha})`;
+}
+
+function renderPresence() {
+  elements.avatarGroup.replaceChildren();
+  const active = state.activeUsers.filter((user) => user.username);
+  const label = elements.presenceBar.querySelector('.presence-label');
+  label.textContent = `Active (${active.length}):`;
+  active.forEach((user) => {
     const pill = document.createElement('div');
     pill.className = 'user-pill';
-    pill.style.backgroundColor = u.color || '#3B82F6';
-    pill.innerHTML = `
-      <span>${u.username}</span>
-      ${u.is_typing ? '<span class="typing-indicator"></span>' : ''}
-    `;
-    avatarGroup.appendChild(pill);
-
-    // Admin modal active list
-    const li = document.createElement('li');
-    li.innerHTML = `<strong style="color:${u.color}">${u.username}</strong> - Active`;
-    lstActiveAdmin.appendChild(li);
+    pill.style.backgroundColor = safeColor(user.color);
+    const name = document.createElement('span');
+    name.textContent = `${user.username}${user.role === 'admin' ? ' ♛' : ''}`;
+    pill.appendChild(name);
+    if (user.is_typing) {
+      const typing = document.createElement('span');
+      typing.className = 'typing-indicator';
+      pill.appendChild(typing);
+    }
+    elements.avatarGroup.appendChild(pill);
   });
 }
 
-function updateTypingBanner(data) {
-  const typingUsers = [];
-  if (data.is_typing) {
-    typingBannerText.textContent = `${data.username} is editing live...`;
-    typingBanner.style.display = 'flex';
-  } else {
-    typingBanner.style.display = 'none';
+async function authorizedFetch(url, options = {}) {
+  const headers = new Headers(options.headers || {});
+  if (state.authToken) headers.set('Authorization', `Bearer ${state.authToken}`);
+  return fetch(url, { ...options, headers });
+}
+
+async function loadAccessSettings() {
+  if (!state.authToken || !state.user) return;
+  try {
+    const response = await authorizedFetch('/api/access');
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || 'Unable to load access settings.');
+
+    if (data.mode === 'global') {
+      state.globalEditor = false;
+      state.editableOwnerIds = new Set();
+      renderAccessList(elements.adminGlobalAccessList, data.users, 'global');
+    } else {
+      state.globalEditor = Boolean(data.global_editor);
+      state.editableOwnerIds = new Set(data.editable_owner_ids || []);
+      renderAccessList(elements.studentCodeAccessList, data.users, 'owner');
+    }
+  } catch (error) {
+    showToast(error.message, 'error');
   }
 }
 
-// Code Execution Runner
-btnRunCode.addEventListener('click', async () => {
-  const code = editor.getValue();
-  consoleOutput.className = 'console-output';
-  consoleOutput.textContent = 'Executing Python code on server...';
-  execTimeTag.style.display = 'none';
-  outputDrawer.classList.remove('minimized');
-  iconDrawerChevron.setAttribute('data-lucide', 'chevron-down');
-  lucide.createIcons();
+function renderAccessList(container, users, mode) {
+  container.replaceChildren();
+  if (!users?.length) {
+    const empty = document.createElement('p');
+    empty.className = 'empty-state';
+    empty.textContent = 'No other students are available.';
+    container.appendChild(empty);
+    return;
+  }
+  users.forEach((user) => {
+    const row = document.createElement('div');
+    row.className = 'access-row';
+    const identity = document.createElement('div');
+    identity.className = 'access-identity';
+    const avatar = document.createElement('span');
+    avatar.className = 'access-avatar';
+    avatar.textContent = user.full_name.charAt(0).toUpperCase();
+    const details = document.createElement('span');
+    const name = document.createElement('strong');
+    name.textContent = user.full_name;
+    const status = document.createElement('small');
+    status.textContent = user.online ? 'Online' : 'Offline';
+    status.className = user.online ? 'online-text' : 'offline-text';
+    details.append(name, status);
+    identity.append(avatar, details);
 
-  sendWsMessage({ type: 'code_run_notice' });
+    const switchLabel = document.createElement('label');
+    switchLabel.className = 'access-switch';
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = Boolean(user.enabled);
+    checkbox.setAttribute('aria-label', `Allow ${user.full_name}`);
+    const track = document.createElement('span');
+    track.className = 'access-switch-track';
+    const switchText = document.createElement('span');
+    switchText.className = 'access-switch-text';
+    switchText.textContent = checkbox.checked ? 'On' : 'Off';
+    checkbox.addEventListener('change', async () => {
+      switchText.textContent = checkbox.checked ? 'On' : 'Off';
+      const endpoint = mode === 'global'
+        ? `/api/access/global/${encodeURIComponent(user.account_id)}`
+        : `/api/access/owner/${encodeURIComponent(user.account_id)}`;
+      const response = await authorizedFetch(endpoint, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: checkbox.checked }),
+      });
+      if (!response.ok) {
+        const data = await response.json();
+        checkbox.checked = !checkbox.checked;
+        switchText.textContent = checkbox.checked ? 'On' : 'Off';
+        showToast(data.detail || 'Unable to update access.', 'error');
+      }
+    });
+    switchLabel.append(checkbox, track, switchText);
+    row.append(identity, switchLabel);
+    container.appendChild(row);
+  });
+}
+
+async function openSettings() {
+  if (state.user?.role === 'admin') {
+    elements.txtAdminDisplayName.value = state.user.username;
+    elements.numTabLimit.value = state.tabLimit;
+    await Promise.all([loadAdminStudents(), loadAccessSettings()]);
+    elements.dlgAdminSettings.showModal();
+  } else {
+    await loadAccessSettings();
+    elements.dlgStudentSettings.showModal();
+  }
+  lucide.createIcons();
+}
+
+function isSettingsDialogOpen() {
+  return elements.dlgAdminSettings.open || elements.dlgStudentSettings.open;
+}
+
+async function loadAdminStudents() {
+  try {
+    const response = await authorizedFetch('/api/students');
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || 'Unable to load student records.');
+    renderStudentRecords(data.students || []);
+  } catch (error) {
+    setMessage(elements.studentRecordMessage, error.message, 'error');
+  }
+}
+
+function renderStudentRecords(students) {
+  elements.studentRecordsList.replaceChildren();
+  students.forEach((student) => {
+    const row = document.createElement('div');
+    row.className = 'student-record-row';
+    const details = document.createElement('div');
+    const heading = document.createElement('strong');
+    heading.textContent = student.full_name;
+    const metadata = document.createElement('small');
+    metadata.textContent = `${student.student_id} • DOB ${formatDisplayDate(student.date_of_birth)}`;
+    details.append(heading, metadata);
+    if (student.other_info && Object.keys(student.other_info).length) {
+      const extra = document.createElement('small');
+      extra.textContent = Object.values(student.other_info).join(' • ');
+      details.appendChild(extra);
+    }
+
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'btn btn-danger btn-sm';
+    remove.textContent = 'Remove';
+    remove.addEventListener('click', async () => {
+      if (!confirm(`Remove ${student.full_name}? Their active session will be closed.`)) return;
+      const response = await authorizedFetch(`/api/students/${encodeURIComponent(student.account_id)}`, {
+        method: 'DELETE',
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        showToast(data.detail || 'Unable to remove student.', 'error');
+        return;
+      }
+      showToast(`${student.full_name} was removed.`, 'success');
+      await Promise.all([loadAdminStudents(), loadAccessSettings()]);
+    });
+    row.append(details, remove);
+    elements.studentRecordsList.appendChild(row);
+  });
+}
+
+function formatDisplayDate(value) {
+  const [year, month, day] = String(value || '').split('-');
+  return year && month && day ? `${day}/${month}/${year}` : value;
+}
+
+function applyAccountNameUpdate(data) {
+  state.activeUsers = data.active_users || state.activeUsers;
+  if (state.user?.account_id === data.account_id) {
+    state.user.username = data.username;
+    updateSignedInUI();
+  }
+  Object.values(state.lineAuthors).forEach((authors) => {
+    Object.values(authors).forEach((info) => {
+      if (info.account_id === data.account_id) info.author = data.username;
+    });
+  });
+  renderPresence();
+}
+
+async function runCurrentFile() {
+  const file = getActiveFile();
+  if (!file || !state.joined) {
+    showToast('Log in before running code.', 'error');
+    return;
+  }
+  elements.consoleOutput.className = 'console-output';
+  elements.consoleOutput.textContent = file.language === 'cpp'
+    ? 'Compiling and running C++...'
+    : 'Running Python...';
+  elements.outputDrawer.classList.remove('minimized');
+  elements.execTimeTag.style.display = 'none';
+  sendWsMessage({ type: 'code_run_notice', file_id: file.id });
 
   try {
-    const res = await fetch('/api/run', {
+    const response = await authorizedFetch('/api/run', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code })
+      body: JSON.stringify({
+        code: state.editor.getValue(),
+        language: file.language,
+        stdin: elements.programInput.value,
+      }),
     });
-
-    const data = await res.json();
-    execTimeTag.textContent = `${data.elapsed}s`;
-    execTimeTag.style.display = 'inline-block';
-
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || 'Execution failed.');
+    elements.execTimeTag.textContent = `${data.elapsed}s`;
+    elements.execTimeTag.style.display = 'inline-block';
     if (data.stderr) {
-      consoleOutput.className = 'console-output stderr';
-      consoleOutput.textContent = data.stderr + (data.stdout ? '\n' + data.stdout : '');
+      elements.consoleOutput.className = 'console-output stderr';
+      const stage = data.stage === 'compile' ? 'Compiler output:\n' : '';
+      elements.consoleOutput.textContent = `${stage}${data.stderr}${data.stdout ? `\n${data.stdout}` : ''}`;
     } else {
-      consoleOutput.className = 'console-output';
-      consoleOutput.textContent = data.stdout || '(Code executed cleanly with no output)';
+      elements.consoleOutput.textContent = data.stdout || '(Completed successfully with no output)';
     }
-  } catch (err) {
-    consoleOutput.className = 'console-output stderr';
-    consoleOutput.textContent = 'Failed to execute code: ' + err.message;
+  } catch (error) {
+    elements.consoleOutput.className = 'console-output stderr';
+    elements.consoleOutput.textContent = error.message;
   }
-});
-
-// Output Console Toggles
-btnClearOutput.addEventListener('click', () => {
-  consoleOutput.textContent = '';
-  execTimeTag.style.display = 'none';
-});
-
-btnToggleOutput.addEventListener('click', () => {
-  outputDrawer.classList.toggle('minimized');
-  const isMin = outputDrawer.classList.contains('minimized');
-  iconDrawerChevron.setAttribute('data-lucide', isMin ? 'chevron-up' : 'chevron-down');
-  lucide.createIcons();
-});
-
-// Modals Interaction
-btnShowQr.addEventListener('click', () => dlgQr.showModal());
-lanBadge.addEventListener('click', () => dlgQr.showModal());
-btnCloseQr.addEventListener('click', () => dlgQr.close());
-
-btnCopyLanUrl.addEventListener('click', () => {
-  navigator.clipboard.writeText(txtLanUrl.value);
-  btnCopyLanUrl.innerHTML = '<i data-lucide="check"></i> Copied!';
-  lucide.createIcons();
-  setTimeout(() => {
-    btnCopyLanUrl.innerHTML = '<i data-lucide="copy"></i> Copy';
-    lucide.createIcons();
-  }, 2000);
-});
-
-btnCopyCode.addEventListener('click', () => {
-  navigator.clipboard.writeText(editor.getValue());
-  btnCopyCode.innerHTML = '<i data-lucide="check"></i> Copied!';
-  lucide.createIcons();
-  setTimeout(() => {
-    btnCopyCode.innerHTML = '<i data-lucide="copy"></i> Copy Code';
-    lucide.createIcons();
-  }, 2000);
-});
-
-// Admin Panel Logic
-btnAdmin.addEventListener('click', () => dlgAdmin.showModal());
-btnCloseAdmin.addEventListener('click', () => dlgAdmin.close());
-
-btnVerifyPin.addEventListener('click', () => {
-  const pin = txtAdminPin.value.trim();
-  if (pin === '1234') { // Default PIN
-    adminAuthSec.style.display = 'none';
-    adminContentSec.style.display = 'block';
-    loadAdminUsers();
-  } else {
-    alert('Incorrect Admin PIN.');
-  }
-});
-
-async function loadAdminUsers() {
-  const res = await fetch('/api/users');
-  const data = await res.json();
-  txtAllowedUsers.value = (data.allowed_users || []).join('\n');
 }
 
-btnSaveAdminUsers.addEventListener('click', async () => {
-  const lines = txtAllowedUsers.value.split('\n');
-  const res = await fetch('/api/users', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      allowed_users: lines,
-      admin_pin: txtAdminPin.value.trim()
-    })
-  });
-  if (res.ok) {
-    alert('Allowed usernames list updated!');
-    dlgAdmin.close();
-  }
-});
-
-// Snapshots Logic
-btnSnapshots.addEventListener('click', () => {
-  loadSnapshots();
-  dlgSnapshots.showModal();
-});
-btnCloseSnapshots.addEventListener('click', () => dlgSnapshots.close());
-
-btnSaveSnapshot.addEventListener('click', async () => {
-  const label = prompt('Enter a label for this snapshot (e.g. "Exercise 1 Completed"):', 'Snapshot ' + new Date().toLocaleTimeString());
+async function saveSnapshot() {
+  const file = getActiveFile();
+  if (!file) return;
+  const label = prompt('Snapshot label:', `${file.name} ${new Date().toLocaleTimeString()}`);
   if (!label) return;
-
-  await fetch('/api/snapshots', {
+  const response = await authorizedFetch('/api/snapshots', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      label: label,
-      code: editor.getValue(),
-      author: currentUser || 'Anonymous'
-    })
+      label,
+      code: state.editor.getValue(),
+      file_id: file.id,
+      file_name: file.name,
+      language: file.language,
+    }),
   });
-  alert('Snapshot saved successfully!');
-});
+  const data = await response.json();
+  showToast(response.ok ? 'Snapshot saved.' : (data.detail || 'Unable to save snapshot.'), response.ok ? 'success' : 'error');
+}
 
 async function loadSnapshots() {
-  const res = await fetch('/api/snapshots');
-  const data = await res.json();
-  snapshotsList.innerHTML = '';
-
-  if (!data.snapshots || data.snapshots.length === 0) {
-    snapshotsList.innerHTML = '<p class="empty-state">No saved snapshots yet.</p>';
+  const response = await authorizedFetch('/api/snapshots');
+  const data = await response.json();
+  elements.snapshotsList.replaceChildren();
+  if (!response.ok) {
+    const error = document.createElement('p');
+    error.className = 'empty-state';
+    error.textContent = data.detail || 'Unable to load snapshots.';
+    elements.snapshotsList.appendChild(error);
     return;
   }
-
-  data.snapshots.forEach(s => {
+  if (!data.snapshots?.length) {
+    const empty = document.createElement('p');
+    empty.className = 'empty-state';
+    empty.textContent = 'No saved snapshots yet.';
+    elements.snapshotsList.appendChild(empty);
+    return;
+  }
+  data.snapshots.forEach((snapshot) => {
     const card = document.createElement('div');
     card.className = 'snapshot-card';
-    card.innerHTML = `
-      <div class="snapshot-info">
-        <h4>${s.label}</h4>
-        <div class="snapshot-meta">Saved by <strong>${s.author}</strong> at ${s.timestamp}</div>
-      </div>
-      <button class="btn btn-secondary btn-sm btn-restore">Restore Code</button>
-    `;
-
-    card.querySelector('.btn-restore').addEventListener('click', () => {
-      if (confirm(`Restore snapshot "${s.label}" to the live editor?`)) {
-        editor.setValue(s.code);
-        dlgSnapshots.close();
-      }
+    const info = document.createElement('div');
+    info.className = 'snapshot-info';
+    const title = document.createElement('h4');
+    title.textContent = snapshot.label;
+    const metadata = document.createElement('div');
+    metadata.className = 'snapshot-meta';
+    metadata.textContent = `${snapshot.file_name || 'Legacy file'} • ${snapshot.language === 'cpp' ? 'C++' : 'Python'} • ${snapshot.author} • ${snapshot.timestamp}`;
+    info.append(title, metadata);
+    const restore = document.createElement('button');
+    restore.type = 'button';
+    restore.className = 'btn btn-secondary btn-sm';
+    restore.textContent = 'Restore';
+    restore.addEventListener('click', () => {
+      const target = state.files.find((file) => file.id === snapshot.file_id) || getActiveFile();
+      if (!target || !confirm(`Restore this snapshot into "${target.name}"?`)) return;
+      switchFile(target.id);
+      state.editor.setValue(snapshot.code || '');
+      elements.dlgSnapshots.close();
     });
-
-    snapshotsList.appendChild(card);
+    card.append(info, restore);
+    elements.snapshotsList.appendChild(card);
   });
 }
 
-// Chat Sidebar & DM Controller
-const chatSidebar = document.getElementById('chatSidebar');
-const chatResizeHandle = document.getElementById('chatResizeHandle');
-const btnToggleChatBar = document.getElementById('btnToggleChatBar');
-const btnCollapseChat = document.getElementById('btnCollapseChat');
-const btnMinimizeChat = document.getElementById('btnMinimizeChat');
-const chatUnreadBadge = document.getElementById('chatUnreadBadge');
-
-const tabGroupChat = document.getElementById('tabGroupChat');
-const tabPrivateChat = document.getElementById('tabPrivateChat');
-const dmSubSidebar = document.getElementById('dmSubSidebar');
-const dmConversationsList = document.getElementById('dmConversationsList');
-const btnNewDm = document.getElementById('btnNewDm');
-const dmSelectorBox = document.getElementById('dmSelectorBox');
-const selDmRecipient = document.getElementById('selDmRecipient');
-
-const chatMessagesContainer = document.getElementById('chatMessagesContainer');
-const frmChat = document.getElementById('frmChat');
-const txtChatMessage = document.getElementById('txtChatMessage');
-const btnAttachFile = document.getElementById('btnAttachFile');
-
-let isChatCollapsed = localStorage.getItem('chat_collapsed') === 'true';
-let currentChatTab = 'group'; // 'group' or 'private'
-let activeDmRecipient = null; // currently selected DM partner
-let chatHistoryList = [];
-let unreadCount = 0;
-
-// Load & restore saved panel width
-let savedWidth = parseInt(localStorage.getItem('chat_sidebar_width') || '420', 10);
-if (savedWidth && savedWidth >= 320 && savedWidth <= 700) {
-  if (window.innerWidth >= 768) {
-    chatSidebar.style.width = `${savedWidth}px`;
-  }
-}
-
-// Drag-to-Resize Sidebar Width Hook
-let isDraggingResize = false;
-
-if (chatResizeHandle) {
-  chatResizeHandle.addEventListener('mousedown', (e) => {
-    e.preventDefault();
-    isDraggingResize = true;
-    chatSidebar.classList.add('is-resizing');
-    chatResizeHandle.classList.add('active');
-    document.body.classList.add('is-resizing');
-
-    const handleMouseMove = (moveEvent) => {
-      if (!isDraggingResize) return;
-      const newWidth = window.innerWidth - moveEvent.clientX;
-      if (newWidth >= 320 && newWidth <= 700) {
-        chatSidebar.style.width = `${newWidth}px`;
-        localStorage.setItem('chat_sidebar_width', newWidth);
-      }
-    };
-
-    const handleMouseUp = () => {
-      isDraggingResize = false;
-      chatSidebar.classList.remove('is-resizing');
-      chatResizeHandle.classList.remove('active');
-      document.body.classList.remove('is-resizing');
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
-    };
-
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
+function participantDirectory() {
+  const directory = new Map();
+  state.students.forEach((student) => {
+    directory.set(student.account_id, {
+      account_id: student.account_id,
+      username: student.full_name,
+      role: 'student',
+      online: Boolean(student.online),
+      color: '#64748B',
+    });
   });
-}
-
-// Auto-Growing Textarea & Enter (Send) vs Shift+Enter (New line)
-if (txtChatMessage) {
-  txtChatMessage.addEventListener('input', () => {
-    txtChatMessage.style.height = 'auto';
-    txtChatMessage.style.height = `${Math.min(txtChatMessage.scrollHeight, 120)}px`;
+  state.activeUsers.forEach((user) => {
+    directory.set(user.account_id, {
+      account_id: user.account_id,
+      username: user.username,
+      role: user.role,
+      online: true,
+      color: safeColor(user.color),
+    });
   });
-
-  txtChatMessage.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      frmChat.dispatchEvent(new Event('submit'));
-    }
-  });
+  return directory;
 }
-
-if (btnAttachFile) {
-  btnAttachFile.addEventListener('click', () => {
-    const fileInput = document.createElement('input');
-    fileInput.type = 'file';
-    fileInput.onchange = (e) => {
-      const file = e.target.files[0];
-      if (file) {
-        txtChatMessage.value += ` [Attachment: ${file.name}]`;
-        txtChatMessage.dispatchEvent(new Event('input'));
-      }
-    };
-    fileInput.click();
-  });
-}
-
-// Global ESC key listener to close chat sidebar
-window.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && !isChatCollapsed) {
-    isChatCollapsed = true;
-    localStorage.setItem('chat_collapsed', true);
-    chatSidebar.classList.add('collapsed');
-  }
-});
-
-// Formatting Preview (5 words max + ...)
-function formatMessagePreview(text) {
-  if (!text) return '';
-  const words = text.trim().split(/\s+/);
-  if (words.length <= 5) {
-    return text.trim();
-  }
-  return words.slice(0, 5).join(' ') + '...';
-}
-
-// Floating DM Toast Notification
-function showDmNotification(msg) {
-  const container = document.getElementById('toastContainer');
-  if (!container) return;
-
-  const previewText = formatMessagePreview(msg.text);
-
-  const toast = document.createElement('div');
-  toast.className = 'toast-card';
-  toast.innerHTML = `
-    <div class="toast-avatar" style="background-color: ${msg.color || '#38BDF8'}">
-      ${(msg.sender || 'U').charAt(0).toUpperCase()}
-    </div>
-    <div class="toast-body">
-      <div class="toast-header">
-        <span class="toast-sender">${msg.sender}</span>
-        <span class="toast-tag">🔒 DM</span>
-      </div>
-      <div class="toast-text">${escapeHtml(previewText)}</div>
-    </div>
-  `;
-
-  toast.addEventListener('click', () => {
-    // Expand chat sidebar if collapsed
-    if (isChatCollapsed) {
-      isChatCollapsed = false;
-      localStorage.setItem('chat_collapsed', false);
-      chatSidebar.classList.remove('collapsed');
-    }
-    // Switch to DM tab
-    currentChatTab = 'private';
-    tabPrivateChat.classList.add('active');
-    tabGroupChat.classList.remove('active');
-    dmSubSidebar.style.display = 'flex';
-
-    // Select this sender in DM list & open conversation
-    activeDmRecipient = msg.sender;
-    selDmRecipient.value = msg.sender;
-    sendWsMessage({ type: 'mark_read', target: msg.sender });
-    renderDmConversationsList();
-    renderChatMessages();
-
-    // Remove toast
-    toast.remove();
-  });
-
-  container.appendChild(toast);
-
-  // Auto-remove toast after 6 seconds
-  setTimeout(() => {
-    if (toast.parentNode) {
-      toast.style.opacity = '0';
-      toast.style.transform = 'translateX(100%)';
-      setTimeout(() => toast.remove(), 300);
-    }
-  }, 6000);
-}
-
-// Initialize Chat Sidebar State
-if (isChatCollapsed) {
-  chatSidebar.classList.add('collapsed');
-}
-
-btnToggleChatBar.addEventListener('click', () => {
-  isChatCollapsed = !isChatCollapsed;
-  localStorage.setItem('chat_collapsed', isChatCollapsed);
-  chatSidebar.classList.toggle('collapsed', isChatCollapsed);
-  if (!isChatCollapsed) {
-    unreadCount = 0;
-    updateUnreadBadge();
-    txtChatMessage.focus();
-  }
-});
-
-btnCollapseChat.addEventListener('click', () => {
-  isChatCollapsed = true;
-  localStorage.setItem('chat_collapsed', true);
-  chatSidebar.classList.add('collapsed');
-});
-
-tabGroupChat.addEventListener('click', () => {
-  currentChatTab = 'group';
-  tabGroupChat.classList.add('active');
-  tabPrivateChat.classList.remove('active');
-  dmSubSidebar.style.display = 'none';
-  renderChatMessages();
-});
-
-tabPrivateChat.addEventListener('click', () => {
-  currentChatTab = 'private';
-  tabPrivateChat.classList.add('active');
-  tabGroupChat.classList.remove('active');
-  dmSubSidebar.style.display = 'flex';
-  updateDmRecipientDropdown();
-  renderDmConversationsList();
-  renderChatMessages();
-});
-
-btnNewDm.addEventListener('click', () => {
-  dmSelectorBox.style.display = dmSelectorBox.style.display === 'none' ? 'block' : 'none';
-  if (dmSelectorBox.style.display === 'block') {
-    updateDmRecipientDropdown();
-  }
-});
-
-selDmRecipient.addEventListener('change', () => {
-  activeDmRecipient = selDmRecipient.value;
-  dmSelectorBox.style.display = 'none';
-  sendWsMessage({ type: 'mark_read', target: activeDmRecipient });
-  renderDmConversationsList();
-  renderChatMessages();
-});
 
 function updateDmRecipientDropdown() {
-  const curRecipient = selDmRecipient.value;
-  selDmRecipient.innerHTML = '<option value="" disabled selected>-- Select student to DM --</option>';
-  
-  activeUsersList.forEach(u => {
-    if (!u.username || u.username === currentUser) return;
-    const opt = document.createElement('option');
-    opt.value = u.username;
-    opt.textContent = u.username;
-    selDmRecipient.appendChild(opt);
+  const selected = elements.selDmRecipient.value;
+  const startedConversations = startedDmAccountIds();
+  elements.selDmRecipient.replaceChildren();
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.disabled = true;
+  placeholder.selected = true;
+  placeholder.textContent = 'Select a user to message...';
+  elements.selDmRecipient.appendChild(placeholder);
+  const availablePeople = [...participantDirectory().values()]
+    .filter((person) => (
+      person.account_id
+      && person.account_id !== state.user?.account_id
+      && !startedConversations.has(person.account_id)
+    ))
+    .sort((a, b) => a.username.localeCompare(b.username));
+  availablePeople.forEach((person) => {
+    const option = document.createElement('option');
+    option.value = person.account_id;
+    option.textContent = `${person.username}${person.role === 'admin' ? ' ♛' : ''} (${person.online ? 'Online' : 'Offline'})`;
+    elements.selDmRecipient.appendChild(option);
   });
-
-  if (curRecipient && activeUsersList.some(u => u.username === curRecipient)) {
-    selDmRecipient.value = curRecipient;
+  if (!availablePeople.length) {
+    placeholder.textContent = 'No new users available';
+  }
+  if ([...elements.selDmRecipient.options].some((option) => option.value === selected)) {
+    elements.selDmRecipient.value = selected;
   }
 }
 
-function renderDmConversationsList() {
-  dmConversationsList.innerHTML = '';
+function startedDmAccountIds() {
+  const accountIds = new Set();
+  if (!state.user) return accountIds;
+  state.chatHistory.forEach((message) => {
+    if (message.target === 'group' || !message.sender_account_id || !message.target_account_id) return;
+    if (message.sender_account_id === state.user.account_id) {
+      accountIds.add(message.target_account_id);
+    } else if (message.target_account_id === state.user.account_id) {
+      accountIds.add(message.sender_account_id);
+    }
+  });
+  accountIds.delete(state.user.account_id);
+  return accountIds;
+}
 
-  if (!currentUser) return;
-
-  // Extract all unique users with whom currentUser has exchanged DMs
-  const dmMap = new Map(); // username -> { lastMsg, timestamp, unreadCount, color }
-
-  chatHistoryList.forEach(m => {
-    if (m.target === 'group') return;
-    const otherUser = m.sender === currentUser ? m.target : m.sender;
-    if (!otherUser || otherUser === currentUser) return;
-
-    const isUnread = m.sender !== currentUser && (!m.read_by || !m.read_by.includes(currentUser));
-
-    if (!dmMap.has(otherUser)) {
-      dmMap.set(otherUser, {
-        username: otherUser,
-        color: m.color || '#38BDF8',
-        lastMsg: m.text,
-        timestamp: m.timestamp || '',
-        unreadCount: isUnread ? 1 : 0
-      });
+function receiveChatMessage(message) {
+  if (!message) return;
+  state.chatHistory.push(message);
+  renderChatMessages();
+  renderDmConversations();
+  const fromOther = message.sender_account_id !== state.user?.account_id;
+  const isDirect = message.target !== 'group';
+  if (fromOther && isDirect) {
+    showDmNotification(message);
+    if (
+      isChatCollapsed
+      || state.currentChatTab !== 'private'
+      || state.activeDmAccountId !== message.sender_account_id
+    ) {
+      state.unreadCount += 1;
+      updateUnreadBadge();
     } else {
-      const entry = dmMap.get(otherUser);
-      entry.lastMsg = m.text;
-      entry.timestamp = m.timestamp || entry.timestamp;
-      if (m.sender !== currentUser) entry.color = m.color || entry.color;
-      if (isUnread) entry.unreadCount++;
+      markDmRead(message.sender_account_id);
     }
-  });
-
-  // Ensure active Users without prior chat are also joinable
-  activeUsersList.forEach(u => {
-    if (u.username && u.username !== currentUser && !dmMap.has(u.username)) {
-      dmMap.set(u.username, {
-        username: u.username,
-        color: u.color || '#38BDF8',
-        lastMsg: 'Click to open DM',
-        timestamp: '',
-        unreadCount: 0
-      });
-    }
-  });
-
-  if (dmMap.size === 0) {
-    dmConversationsList.innerHTML = '<div class="dm-empty-list">No recent DMs</div>';
-    return;
-  }
-
-  // Convert to array and render
-  const convList = Array.from(dmMap.values());
-
-  convList.forEach(item => {
-    const isOnline = activeUsersList.some(u => u.username === item.username);
-    const isSelected = activeDmRecipient === item.username;
-    const preview = formatMessagePreview(item.lastMsg);
-
-    const div = document.createElement('div');
-    div.className = `dm-item ${isSelected ? 'selected' : ''}`;
-    div.innerHTML = `
-      <div class="dm-avatar-box">
-        <div class="dm-avatar" style="background-color: ${item.color}">${item.username.charAt(0).toUpperCase()}</div>
-        <span class="status-dot-badge ${isOnline ? 'online' : 'offline'}" title="${isOnline ? 'Online' : 'Offline'}"></span>
-      </div>
-      <div class="dm-details">
-        <div class="dm-row-top">
-          <span class="dm-username">${escapeHtml(item.username)}</span>
-          <span class="dm-time">${item.timestamp}</span>
-        </div>
-        <div class="dm-last-msg">${escapeHtml(preview)}</div>
-      </div>
-      ${item.unreadCount > 0 ? `<span class="dm-unread-pill">${item.unreadCount}</span>` : ''}
-    `;
-
-    div.addEventListener('click', () => {
-      activeDmRecipient = item.username;
-      selDmRecipient.value = item.username;
-      sendWsMessage({ type: 'mark_read', target: item.username });
-      renderDmConversationsList();
-      renderChatMessages();
-    });
-
-    dmConversationsList.appendChild(div);
-  });
-}
-
-function updateUnreadBadge() {
-  if (unreadCount > 0 && isChatCollapsed) {
-    chatUnreadBadge.textContent = unreadCount > 9 ? '9+' : unreadCount;
-    chatUnreadBadge.style.display = 'inline-block';
-  } else {
-    chatUnreadBadge.style.display = 'none';
-    unreadCount = 0;
+  } else if (fromOther && isChatCollapsed) {
+    state.unreadCount += 1;
+    updateUnreadBadge();
   }
 }
 
 function renderChatMessages() {
-  chatMessagesContainer.innerHTML = '';
-
-  const targetDm = currentChatTab === 'private' ? activeDmRecipient : null;
-
-  const filtered = chatHistoryList.filter(m => {
-    if (currentChatTab === 'group') {
-      return m.target === 'group';
-    } else { // private
-      if (m.target === 'group') return false;
-      if (!targetDm) return false;
-      const isSenderMe = m.sender === currentUser;
-      const isRecipientMe = m.target === currentUser;
-      return (isSenderMe && m.target === targetDm) || (isRecipientMe && m.sender === targetDm);
-    }
+  elements.chatMessagesContainer.replaceChildren();
+  const filtered = state.chatHistory.filter((message) => {
+    if (state.currentChatTab === 'group') return message.target === 'group';
+    if (!state.activeDmAccountId || message.target === 'group') return false;
+    return (
+      message.sender_account_id === state.user?.account_id
+      && message.target_account_id === state.activeDmAccountId
+    ) || (
+      message.target_account_id === state.user?.account_id
+      && message.sender_account_id === state.activeDmAccountId
+    );
   });
 
-  if (filtered.length === 0) {
-    const emptyState = document.createElement('div');
-    emptyState.className = 'chat-empty-state';
-    emptyState.innerHTML = `
-      <i data-lucide="${currentChatTab === 'group' ? 'messages-square' : 'lock'}"></i>
-      <p>${currentChatTab === 'group' ? 'Classroom Group Channel' : (targetDm ? `Private Chat with ${targetDm}` : 'Select a conversation above to start DM')}</p>
-      <span>${currentChatTab === 'group' ? 'No group messages yet.' : 'Send a private message.'}</span>
-    `;
-    chatMessagesContainer.appendChild(emptyState);
-    lucide.createIcons();
+  if (!filtered.length) {
+    const empty = document.createElement('div');
+    empty.className = 'chat-empty-state';
+    const title = document.createElement('p');
+    title.textContent = state.currentChatTab === 'group'
+      ? 'Classroom Group Channel'
+      : state.activeDmAccountId
+        ? 'No messages in this conversation'
+        : 'Select a direct-message conversation';
+    const hint = document.createElement('span');
+    hint.textContent = state.currentChatTab === 'group' ? 'No group messages yet.' : 'Messages are private to both users.';
+    empty.append(title, hint);
+    elements.chatMessagesContainer.appendChild(empty);
     return;
   }
 
-  filtered.forEach(m => {
-    const isOwn = m.sender === currentUser;
-    const isPrivate = m.target !== 'group';
-
+  filtered.forEach((message) => {
+    const own = message.sender_account_id === state.user?.account_id
+      || (!message.sender_account_id && message.sender === state.user?.username);
     const card = document.createElement('div');
-    card.className = `chat-msg-card ${isOwn ? 'own' : 'other'} ${isPrivate ? 'private' : ''}`;
+    card.className = `chat-msg-card ${own ? 'own' : 'other'}${message.target !== 'group' ? ' private' : ''}`;
+    const header = document.createElement('div');
+    header.className = 'chat-msg-header';
+    const sender = document.createElement('span');
+    sender.className = 'chat-sender-name';
+    sender.style.color = safeColor(message.color);
+    sender.textContent = own
+      ? 'You'
+      : `${message.sender || 'User'}${message.sender_role === 'admin' ? ' ♛' : ''}`;
+    const timestamp = document.createElement('span');
+    timestamp.className = 'chat-timestamp';
+    timestamp.textContent = message.timestamp || '';
+    header.append(sender, timestamp);
+    const bubble = document.createElement('div');
+    bubble.className = 'chat-msg-bubble';
+    bubble.textContent = message.text || '';
+    card.append(header, bubble);
+    elements.chatMessagesContainer.appendChild(card);
+  });
+  elements.chatMessagesContainer.scrollTop = elements.chatMessagesContainer.scrollHeight;
+}
 
-    card.innerHTML = `
-      <div class="chat-msg-header">
-        <span class="chat-sender-name" style="color: ${m.color || 'inherit'}">${isOwn ? 'You' : m.sender}</span>
-        ${isPrivate ? `<span class="chat-badge-dm">🔒 DM</span>` : ''}
-        <span class="chat-timestamp">${m.timestamp}</span>
-      </div>
-      <div class="chat-msg-bubble">${escapeHtml(m.text)}</div>
-    `;
-
-    chatMessagesContainer.appendChild(card);
+function renderDmConversations() {
+  elements.dmConversationsList.replaceChildren();
+  if (!state.user) return;
+  const directory = participantDirectory();
+  const conversations = new Map();
+  state.chatHistory.forEach((message) => {
+    if (message.target === 'group' || !message.sender_account_id || !message.target_account_id) return;
+    const otherId = message.sender_account_id === state.user.account_id
+      ? message.target_account_id
+      : message.sender_account_id;
+    if (otherId === state.user.account_id) return;
+    const entry = conversations.get(otherId) || {
+      accountId: otherId,
+      lastMessage: '',
+      lastId: 0,
+      unread: 0,
+    };
+    if ((message.id || 0) >= entry.lastId) {
+      entry.lastMessage = message.text;
+      entry.lastId = message.id || 0;
+      entry.timestamp = message.timestamp || '';
+    }
+    if (
+      message.sender_account_id === otherId
+      && !(message.read_by || []).includes(state.user.account_id)
+    ) entry.unread += 1;
+    conversations.set(otherId, entry);
   });
 
-  chatMessagesContainer.scrollTop = chatMessagesContainer.scrollHeight;
-}
-
-function escapeHtml(str) {
-  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
-}
-
-frmChat.addEventListener('submit', (e) => {
-  e.preventDefault();
-  const text = txtChatMessage.value.trim();
-  if (!text) return;
-
-  if (!currentUser) {
-    alert('Please log in first before sending messages.');
-    dlgLogin.showModal();
+  const sorted = [...conversations.values()].sort((a, b) => b.lastId - a.lastId);
+  if (!sorted.length) {
+    const empty = document.createElement('div');
+    empty.className = 'dm-empty-list';
+    empty.textContent = 'No chats started yet. Select a user above to begin.';
+    elements.dmConversationsList.appendChild(empty);
     return;
   }
 
-  let target = 'group';
-  if (currentChatTab === 'private') {
-    target = activeDmRecipient;
-    if (!target) {
-      alert('Please select a student from the Direct Messages conversation list.');
+  sorted.forEach((conversation) => {
+    const person = directory.get(conversation.accountId) || {
+      username: 'Former student',
+      role: 'student',
+      online: false,
+      color: '#64748B',
+    };
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = `dm-item${state.activeDmAccountId === conversation.accountId ? ' selected' : ''}`;
+    const avatarBox = document.createElement('span');
+    avatarBox.className = 'dm-avatar-box';
+    const avatar = document.createElement('span');
+    avatar.className = 'dm-avatar';
+    avatar.style.backgroundColor = safeColor(person.color);
+    avatar.textContent = person.username.charAt(0).toUpperCase();
+    const status = document.createElement('span');
+    status.className = `status-dot-badge ${person.online ? 'online' : 'offline'}`;
+    avatarBox.append(avatar, status);
+    const details = document.createElement('span');
+    details.className = 'dm-details';
+    const name = document.createElement('strong');
+    name.className = 'dm-username';
+    name.textContent = `${person.username}${person.role === 'admin' ? ' ♛' : ''}`;
+    const preview = document.createElement('small');
+    preview.className = 'dm-last-msg';
+    preview.textContent = messagePreview(conversation.lastMessage);
+    details.append(name, preview);
+    row.append(avatarBox, details);
+    if (conversation.unread) {
+      const unread = document.createElement('span');
+      unread.className = 'dm-unread-pill';
+      unread.textContent = String(conversation.unread);
+      row.appendChild(unread);
+    }
+    row.addEventListener('click', () => openDm(conversation.accountId));
+    elements.dmConversationsList.appendChild(row);
+  });
+}
+
+function messagePreview(text) {
+  const words = String(text || '').trim().split(/\s+/).filter(Boolean);
+  return words.length <= 5 ? words.join(' ') : `${words.slice(0, 5).join(' ')}...`;
+}
+
+function openDm(accountId) {
+  if (!accountId) return;
+  state.activeDmAccountId = accountId;
+  state.currentChatTab = 'private';
+  elements.tabPrivateChat.classList.add('active');
+  elements.tabGroupChat.classList.remove('active');
+  elements.selDmRecipient.value = accountId;
+  elements.dmSelectorBox.style.display = 'none';
+  syncChatView();
+  markDmRead(accountId);
+  renderDmConversations();
+  renderChatMessages();
+  setTimeout(() => elements.txtChatMessage.focus(), 0);
+}
+
+function showDmList() {
+  state.activeDmAccountId = null;
+  elements.dmSelectorBox.style.display = 'none';
+  elements.selDmRecipient.value = '';
+  syncChatView();
+  updateDmRecipientDropdown();
+  renderDmConversations();
+  renderChatMessages();
+}
+
+function syncChatView() {
+  const directMessages = state.currentChatTab === 'private';
+  const conversationOpen = directMessages && Boolean(state.activeDmAccountId);
+  elements.chatSidebar.classList.toggle('dm-list-view', directMessages && !conversationOpen);
+  elements.dmSubSidebar.style.display = directMessages && !conversationOpen ? 'flex' : 'none';
+  elements.dmConversationHeader.style.display = conversationOpen ? 'flex' : 'none';
+  elements.chatMessagesContainer.style.display = !directMessages || conversationOpen ? 'flex' : 'none';
+  elements.frmChat.style.display = !directMessages || conversationOpen ? 'flex' : 'none';
+
+  if (!conversationOpen) {
+    elements.txtChatMessage.placeholder = 'Type a message...';
+    return;
+  }
+
+  const person = participantDirectory().get(state.activeDmAccountId) || {
+    username: 'Former student',
+    role: 'student',
+    online: false,
+    color: '#64748B',
+  };
+  elements.dmActiveAvatar.style.backgroundColor = safeColor(person.color);
+  elements.dmActiveAvatar.textContent = person.username.charAt(0).toUpperCase();
+  elements.dmActiveName.textContent = `${person.username}${person.role === 'admin' ? ' ♛' : ''}`;
+  elements.dmActiveStatus.textContent = person.online ? 'Online' : 'Offline';
+  elements.dmActiveStatus.className = person.online ? 'online-text' : 'offline-text';
+  elements.txtChatMessage.placeholder = `Message ${person.username}...`;
+}
+
+function markDmRead(accountId) {
+  sendWsMessage({ type: 'mark_read', target_account_id: accountId });
+}
+
+function showDmNotification(message) {
+  const toast = document.createElement('button');
+  toast.type = 'button';
+  toast.className = 'toast-card';
+  const avatar = document.createElement('span');
+  avatar.className = 'toast-avatar';
+  avatar.style.backgroundColor = safeColor(message.color);
+  avatar.textContent = (message.sender || 'U').charAt(0).toUpperCase();
+  const bodyElement = document.createElement('span');
+  bodyElement.className = 'toast-body';
+  const header = document.createElement('span');
+  header.className = 'toast-header';
+  const sender = document.createElement('strong');
+  sender.className = 'toast-sender';
+  sender.textContent = `${message.sender}${message.sender_role === 'admin' ? ' ♛' : ''}`;
+  const tag = document.createElement('span');
+  tag.className = 'toast-tag';
+  tag.textContent = '🔒 DM';
+  const preview = document.createElement('span');
+  preview.className = 'toast-text';
+  preview.textContent = messagePreview(message.text);
+  header.append(sender, tag);
+  bodyElement.append(header, preview);
+  toast.append(avatar, bodyElement);
+  toast.addEventListener('click', () => {
+    expandChat();
+    openDm(message.sender_account_id);
+    toast.remove();
+  });
+  elements.toastContainer.appendChild(toast);
+  setTimeout(() => toast.remove(), 6000);
+}
+
+function updateUnreadBadge() {
+  if (state.unreadCount > 0 && isChatCollapsed) {
+    elements.chatUnreadBadge.textContent = state.unreadCount > 9 ? '9+' : String(state.unreadCount);
+    elements.chatUnreadBadge.style.display = 'inline-block';
+  } else {
+    elements.chatUnreadBadge.style.display = 'none';
+  }
+}
+
+function restoreChatLayout() {
+  elements.chatSidebar.classList.toggle('collapsed', isChatCollapsed);
+  elements.chatSidebar.classList.toggle('minimized-chat', isChatMinimized);
+  const savedWidth = parseInt(localStorage.getItem('chat_sidebar_width') || '420', 10);
+  if (window.innerWidth >= 768 && savedWidth >= 320 && savedWidth <= 700) {
+    elements.chatSidebar.style.width = `${savedWidth}px`;
+  }
+}
+
+function expandChat() {
+  isChatCollapsed = false;
+  isChatMinimized = false;
+  localStorage.setItem('chat_collapsed', 'false');
+  localStorage.setItem('chat_minimized', 'false');
+  elements.chatSidebar.classList.remove('collapsed', 'minimized-chat');
+  state.unreadCount = 0;
+  updateUnreadBadge();
+}
+
+function bindInterfaceEvents() {
+  elements.btnThemeToggle.addEventListener('click', () => {
+    setTheme(body.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+  });
+  elements.btnFontInc.addEventListener('click', () => setFontSize(currentFontSize + 1));
+  elements.btnFontDec.addEventListener('click', () => setFontSize(currentFontSize - 1));
+
+  elements.btnChooseAdmin.addEventListener('click', () => selectLoginRole('admin'));
+  elements.btnChooseStudent.addEventListener('click', () => selectLoginRole('student'));
+  elements.btnBackFromAdmin.addEventListener('click', resetLoginChoice);
+  elements.btnBackFromStudent.addEventListener('click', resetLoginChoice);
+  document.querySelectorAll('.password-toggle').forEach((button) => {
+    button.addEventListener('click', () => {
+      const input = $(button.dataset.passwordTarget);
+      input.type = input.type === 'password' ? 'text' : 'password';
+      const icon = button.querySelector('i');
+      icon.setAttribute('data-lucide', input.type === 'password' ? 'eye' : 'eye-off');
+      lucide.createIcons();
+    });
+  });
+
+  elements.frmAdminLogin.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const password = elements.txtAdminPassword.value;
+    if (!password) {
+      setMessage(elements.loginMessage, 'Enter the Admin password.', 'error');
       return;
     }
-  }
-
-  sendWsMessage({
-    type: 'chat_message',
-    target: target,
-    text: text
+    submitLogin('admin', { password });
   });
 
-  txtChatMessage.value = '';
-  txtChatMessage.style.height = 'auto';
-});
+  elements.frmStudentLogin.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const studentId = elements.txtStudentIdLogin.value.trim();
+    const dateOfBirth = elements.txtStudentDobLogin.value;
+    const password = elements.txtStudentPassword.value;
+    if (!studentId || !dateOfBirth || !password) {
+      setMessage(elements.loginMessage, 'Complete every student login field.', 'error');
+      return;
+    }
+    submitLogin('student', {
+      student_id: studentId,
+      date_of_birth: dateOfBirth,
+      password,
+    });
+  });
+  elements.btnLogout.addEventListener('click', logout);
 
-// Update DM recipient dropdown when presence list updates
-const origUpdatePresenceList = updatePresenceList;
-updatePresenceList = function(activeUsers) {
-  origUpdatePresenceList(activeUsers);
-  updateDmRecipientDropdown();
-};
+  elements.btnAddFile.addEventListener('click', () => {
+    elements.frmNewFile.reset();
+    setMessage(elements.newFileMessage, '');
+    elements.dlgNewFile.showModal();
+    elements.txtNewFileName.focus();
+  });
+  elements.btnCloseNewFile.addEventListener('click', () => elements.dlgNewFile.close());
+  elements.frmNewFile.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const name = elements.txtNewFileName.value.trim();
+    if (!name) {
+      setMessage(elements.newFileMessage, 'Enter a file name.', 'error');
+      return;
+    }
+    sendWsMessage({
+      type: 'create_file',
+      name,
+      language: elements.selNewFileLanguage.value,
+    });
+    setMessage(elements.newFileMessage, 'Creating file...', 'success');
+  });
 
+  elements.btnSettings.addEventListener('click', openSettings);
+  elements.btnCloseAdminSettings.addEventListener('click', () => elements.dlgAdminSettings.close());
+  elements.btnCloseStudentSettings.addEventListener('click', () => elements.dlgStudentSettings.close());
+  elements.btnSaveAdminName.addEventListener('click', async () => {
+    const displayName = elements.txtAdminDisplayName.value.trim();
+    if (!displayName) {
+      setMessage(elements.adminNameMessage, 'Enter a display name.', 'error');
+      return;
+    }
+    const response = await authorizedFetch('/api/admin/name', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ display_name: displayName }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      setMessage(elements.adminNameMessage, data.detail || 'Unable to change name.', 'error');
+      return;
+    }
+    state.user.username = data.username;
+    updateSignedInUI();
+    setMessage(elements.adminNameMessage, 'Admin name updated.', 'success');
+  });
+
+  elements.frmAddStudent.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const fullName = elements.txtNewStudentName.value.trim();
+    const studentId = elements.txtNewStudentId.value.trim();
+    const dateOfBirth = elements.txtNewStudentDob.value;
+    if (!fullName || !studentId || !dateOfBirth) {
+      setMessage(elements.studentRecordMessage, 'Name, Student ID, and DOB are required.', 'error');
+      return;
+    }
+    const otherText = elements.txtNewStudentInfo.value.trim();
+    const response = await authorizedFetch('/api/students', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        full_name: fullName,
+        student_id: studentId,
+        date_of_birth: dateOfBirth,
+        other_info: otherText ? { notes: otherText } : {},
+      }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      setMessage(elements.studentRecordMessage, data.detail || 'Unable to add student.', 'error');
+      return;
+    }
+    elements.frmAddStudent.reset();
+    setMessage(elements.studentRecordMessage, `${data.student.full_name} was added.`, 'success');
+    await Promise.all([loadAdminStudents(), loadAccessSettings()]);
+  });
+
+  elements.btnSaveTabLimit.addEventListener('click', async () => {
+    const tabLimit = Number(elements.numTabLimit.value);
+    const response = await authorizedFetch('/api/settings/tab-limit', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tab_limit: tabLimit }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      setMessage(elements.tabLimitMessage, data.detail || 'Unable to update tab limit.', 'error');
+      return;
+    }
+    state.tabLimit = data.tab_limit;
+    renderFileTabs();
+    setMessage(elements.tabLimitMessage, `Tab limit set to ${data.tab_limit}.`, 'success');
+  });
+
+  elements.btnRunCode.addEventListener('click', runCurrentFile);
+  elements.programInput.addEventListener('input', saveProgramInput);
+  elements.btnClearProgramInput.addEventListener('click', () => {
+    elements.programInput.value = '';
+    saveProgramInput();
+    elements.programInput.focus();
+  });
+  elements.btnCopyCode.addEventListener('click', async () => {
+    await navigator.clipboard.writeText(state.editor.getValue());
+    showToast('Code copied.', 'success');
+  });
+  elements.btnSaveSnapshot.addEventListener('click', saveSnapshot);
+  elements.btnSnapshots.addEventListener('click', async () => {
+    await loadSnapshots();
+    elements.dlgSnapshots.showModal();
+  });
+  elements.btnCloseSnapshots.addEventListener('click', () => elements.dlgSnapshots.close());
+  elements.btnClearOutput.addEventListener('click', () => {
+    elements.consoleOutput.textContent = '';
+    elements.execTimeTag.style.display = 'none';
+  });
+  elements.btnToggleOutput.addEventListener('click', () => {
+    elements.outputDrawer.classList.toggle('minimized');
+    const minimized = elements.outputDrawer.classList.contains('minimized');
+    elements.iconDrawerChevron.setAttribute('data-lucide', minimized ? 'chevron-up' : 'chevron-down');
+    lucide.createIcons();
+  });
+
+  elements.btnShowQr.addEventListener('click', () => elements.dlgQr.showModal());
+  elements.lanBadge.addEventListener('click', () => elements.dlgQr.showModal());
+  elements.btnCloseQr.addEventListener('click', () => elements.dlgQr.close());
+  elements.btnCopyLanUrl.addEventListener('click', async () => {
+    await navigator.clipboard.writeText(elements.txtLanUrl.value);
+    showToast('Network address copied.', 'success');
+  });
+
+  elements.btnToggleChatBar.addEventListener('click', () => {
+    if (isChatCollapsed) expandChat();
+    else {
+      isChatCollapsed = true;
+      localStorage.setItem('chat_collapsed', 'true');
+      elements.chatSidebar.classList.add('collapsed');
+    }
+  });
+  elements.btnCollapseChat.addEventListener('click', () => {
+    isChatCollapsed = true;
+    localStorage.setItem('chat_collapsed', 'true');
+    elements.chatSidebar.classList.add('collapsed');
+  });
+  elements.btnMinimizeChat.addEventListener('click', () => {
+    isChatMinimized = !isChatMinimized;
+    localStorage.setItem('chat_minimized', String(isChatMinimized));
+    elements.chatSidebar.classList.toggle('minimized-chat', isChatMinimized);
+  });
+  elements.tabGroupChat.addEventListener('click', () => {
+    state.currentChatTab = 'group';
+    state.activeDmAccountId = null;
+    elements.tabGroupChat.classList.add('active');
+    elements.tabPrivateChat.classList.remove('active');
+    syncChatView();
+    renderChatMessages();
+  });
+  elements.tabPrivateChat.addEventListener('click', () => {
+    state.currentChatTab = 'private';
+    state.activeDmAccountId = null;
+    elements.tabPrivateChat.classList.add('active');
+    elements.tabGroupChat.classList.remove('active');
+    syncChatView();
+    updateDmRecipientDropdown();
+    renderDmConversations();
+    renderChatMessages();
+  });
+  elements.btnBackToDmList.addEventListener('click', showDmList);
+  elements.btnNewDm.addEventListener('click', () => {
+    const visible = elements.dmSelectorBox.style.display !== 'none';
+    elements.dmSelectorBox.style.display = visible ? 'none' : 'block';
+    if (!visible) updateDmRecipientDropdown();
+  });
+  elements.selDmRecipient.addEventListener('change', () => {
+    elements.dmSelectorBox.style.display = 'none';
+    openDm(elements.selDmRecipient.value);
+  });
+  elements.frmChat.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const text = elements.txtChatMessage.value.trim();
+    if (!text || !state.joined) return;
+    if (state.currentChatTab === 'private' && !state.activeDmAccountId) {
+      showToast('Select a user for the direct message.', 'error');
+      return;
+    }
+    sendWsMessage({
+      type: 'chat_message',
+      target: state.currentChatTab === 'group' ? 'group' : 'private',
+      target_account_id: state.currentChatTab === 'private' ? state.activeDmAccountId : null,
+      text,
+    });
+    elements.txtChatMessage.value = '';
+    elements.txtChatMessage.style.height = 'auto';
+  });
+  elements.txtChatMessage.addEventListener('input', () => {
+    elements.txtChatMessage.style.height = 'auto';
+    elements.txtChatMessage.style.height = `${Math.min(elements.txtChatMessage.scrollHeight, 120)}px`;
+  });
+  elements.txtChatMessage.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      elements.frmChat.requestSubmit();
+    }
+  });
+  elements.btnAttachFile.addEventListener('click', () => {
+    const fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.addEventListener('change', () => {
+      const file = fileInput.files?.[0];
+      if (file) elements.txtChatMessage.value += ` [Attachment: ${file.name}]`;
+    });
+    fileInput.click();
+  });
+
+  initializeChatResize();
+  window.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !isChatCollapsed && !document.querySelector('dialog[open]')) {
+      isChatCollapsed = true;
+      localStorage.setItem('chat_collapsed', 'true');
+      elements.chatSidebar.classList.add('collapsed');
+    }
+  });
+}
+
+function initializeChatResize() {
+  if (!elements.chatResizeHandle) return;
+  elements.chatResizeHandle.addEventListener('pointerdown', (event) => {
+    if (window.innerWidth < 768) return;
+    event.preventDefault();
+    elements.chatResizeHandle.setPointerCapture(event.pointerId);
+    body.classList.add('is-resizing');
+    elements.chatSidebar.classList.add('is-resizing');
+    const move = (moveEvent) => {
+      const width = Math.min(Math.max(window.innerWidth - moveEvent.clientX, 320), 700);
+      elements.chatSidebar.style.width = `${width}px`;
+      localStorage.setItem('chat_sidebar_width', String(width));
+    };
+    const end = () => {
+      body.classList.remove('is-resizing');
+      elements.chatSidebar.classList.remove('is-resizing');
+      elements.chatResizeHandle.removeEventListener('pointermove', move);
+      elements.chatResizeHandle.removeEventListener('pointerup', end);
+      elements.chatResizeHandle.removeEventListener('pointercancel', end);
+    };
+    elements.chatResizeHandle.addEventListener('pointermove', move);
+    elements.chatResizeHandle.addEventListener('pointerup', end);
+    elements.chatResizeHandle.addEventListener('pointercancel', end);
+  });
+}
+
+function setMessage(element, message, type = '') {
+  element.textContent = message;
+  element.className = `form-message${type ? ` ${type}` : ''}`;
+}
+
+function showToast(message, type = '') {
+  const toast = document.createElement('div');
+  toast.className = `toast-card system-toast${type ? ` ${type}` : ''}`;
+  const text = document.createElement('span');
+  text.className = 'toast-text';
+  text.textContent = message;
+  toast.appendChild(text);
+  elements.toastContainer.appendChild(toast);
+  setTimeout(() => toast.remove(), 4000);
+}

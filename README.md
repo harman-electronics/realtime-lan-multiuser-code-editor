@@ -1,54 +1,193 @@
 # Real-Time LAN Multiuser Code Editor
 
-A real-time LAN code editor for Python with synchronized multiuser editing,
-live presence, chat, snapshots, and server-side code execution—all updated live
-for connected users.
+A real-time LAN code editor for Python and C++ with registered accounts,
+multi-file collaboration, line ownership, access controls, live presence,
+group chat, direct messages, snapshots, and server-side code execution.
 
-![Version 1.2 interface](docs/images/version-1.2-permission-mode.jpg)
+![Version 2.0 interface](docs/images/version-2.0-accounts-workspace-messaging.png)
 
 ## Version
 
-This repository represents **Version 1.2 — Blank-Line Claiming and Permission
-Modes**.
+This repository represents **Version 2.0 — Registered Accounts, Multi-File
+Workspace and Messaging**.
 
-Version 1.2 builds on line ownership by keeping blank lines open for any user
-and giving the Lecturer a synchronized class-wide choice between Restricted
-and Open Editing. Later releases document each addition, modification, and
-removal through the public changelog.
+Version 2.0 is a major Rapid Application Development milestone adding
+registered identities, multi-file Python/C++ collaboration, granular code
+permissions, program input, and improved messaging.
 
-For a detailed explanation of new features, fixes, changes, and historical
-notes, read the [changelog](CHANGELOG.md).
+For a detailed explanation of additions, replacements, fixes, security notes,
+and earlier milestones, read the [changelog](CHANGELOG.md).
 
-## What's new in Version 1.2
+> [!WARNING]
+> **Use Version 2.0 only on a trusted host computer and trusted local network.**
+> It is intended for a small class, lab, or study group working together with
+> or without their lecturer. A group working without a lecturer must designate
+> one trusted member as the Admin. Do not deploy this version to the public
+> internet. Student names, Student IDs, dates of birth, code, chats, snapshots,
+> ownership records, and permissions are stored locally as readable JSON files
+> in the host's `data` folder. The application has no cloud synchronization and
+> does not intentionally upload these records online, but they can be exposed
+> if the server is made public or if a populated `data` folder is uploaded to
+> GitHub, cloud storage, or another service. Never publish real class data.
 
-- Blank lines remain unclaimed and can be used by any participant
-- Writing on a blank line automatically claims its non-empty content
-- Clearing a line releases its ownership for another participant
-- Restricted mode preserves per-line creator protection
-- Open Editing mode temporarily allows everyone to edit any line
-- A global permission control is shown to the participant using the Lecturer
-  role and synchronizes the selected mode for all connected users
-- The current permission mode is saved between server restarts
+## University-friendly controlled access
 
-## Features
+Before a student can sign in, their identity must be pre-registered by the
+lecturer acting as Admin. The record contains the student's full name, Student
+ID, date of birth, and optional class information. A student can enter the
+workspace only when their login details match an active record.
 
-- Real-time shared Python editor over a local Wi-Fi or Ethernet network
-- Live user presence, cursor positions, selections, and typing activity
-- Per-line ownership and read-only editing permissions
-- Restricted and class-wide Open Editing permission modes
-- Live active-line highlights and creator tooltips
-- Exclusive cursor-colour selection for connected users
-- Python execution with standard output and error reporting
-- Group chat and private direct messages
-- Direct-message notifications and unread indicators
-- Resizable and collapsible chat panel
-- Named code snapshots with restore support
-- Light and dark editor themes
-- Adjustable editor font size
-- QR code and LAN address sharing
-- A PIN-gated Lecturer Admin panel for managing the allowed username list
-  (demonstration protection only)
-- Responsive interface for laptops, tablets, and phones
+This controlled-enrolment workflow prevents anonymous self-registration and
+associates collaborative activity with a known class member. It can also be
+used by a small independent study group when one trusted member manages the
+records through the Admin account.
+
+> [!IMPORTANT]
+> This is a university-friendly prototype, not official university identity
+> authentication. It is not connected to institutional SSO, Active Directory,
+> or a protected student database. The shared testing password and readable
+> JSON records must be replaced with individual password hashing, encrypted
+> storage, HTTPS, a database, and institutional authentication before any
+> production or campus-wide deployment.
+
+## Main features
+
+- Controlled student records managed by a trusted Admin
+- Real-time multi-file Python and C++ collaboration over a LAN
+- Persistent line ownership, blank-line claiming, and code-access permissions
+- Python and C++ execution with per-file Program Input (`stdin`)
+- Live presence, collaborative cursors, and restorable code snapshots
+- Group chat and improved direct messaging with unread alerts
+- LAN/QR sharing, light and dark themes, and adjustable editor text
+
+See the [changelog](CHANGELOG.md) for the complete Version 2.0 feature list and
+detailed changes from earlier versions.
+
+## C++ compiler requirements
+
+C++ files can be edited on any connected device, but compilation happens on the
+host computer running `python app.py`. Students do not need to install a
+compiler on their own devices.
+
+Version 2.0 automatically searches the host for:
+
+1. `g++`
+2. `clang++`
+3. A compatible compiler path supplied through `LIVE_EDITOR_CPP_COMPILER`
+
+Version 2.0 was tested successfully on the project computer using **g++**. It
+compiled and ran a C++17 program through the authenticated application API.
+
+Check whether a supported compiler is available from Windows Command Prompt:
+
+```cmd
+g++ --version
+```
+
+or:
+
+```cmd
+clang++ --version
+```
+
+If neither command works, install either g++ or clang++ on the host computer,
+add it to `PATH`, close and reopen Command Prompt, and start the server again.
+You can also provide an explicit executable path for the current CMD session:
+
+```cmd
+set "LIVE_EDITOR_CPP_COMPILER=C:\path\to\g++.exe"
+python app.py
+```
+
+An arbitrary compiler is not guaranteed to work. The current compile command
+uses GCC/Clang-style options such as `-std=c++17`, `-O0`, and `-o`. Microsoft
+Visual C++ `cl.exe` uses different options and is not supported without a code
+change.
+
+## Program input (`stdin`)
+
+Programs that use Python `input()` or C++ `std::cin` need values before they
+run. Enter those values in the **Program Input (stdin)** box above the output
+console, then select **Run Python** or **Compile & Run C++**.
+
+![C++ Program Input producing correct results](docs/images/version-2.0-program-input.png)
+
+For example, this C++ statement:
+
+```cpp
+std::cin >> num1 >> num2;
+```
+
+can use either of these input formats:
+
+```text
+10 5
+```
+
+or:
+
+```text
+10
+5
+```
+
+The input is limited to 20,000 characters and is saved in the current browser
+for each file. It is not synchronized with other participants and is not saved
+in the host's classroom data files. This allows each participant to test the
+same shared code with different input values.
+
+## Installing Python libraries
+
+Python standard-library modules such as `math`, `json`, `statistics`, and
+`collections` work without an additional installation. A third-party package
+must be installed on the host computer into the same Python environment used
+to start the server. Connected participants do not install it on their own
+devices.
+
+From the activated project environment in Windows Command Prompt:
+
+```cmd
+python -m pip install package-name
+python app.py
+```
+
+For example:
+
+```cmd
+python -m pip install humanize
+python app.py
+```
+
+Then a program can use:
+
+```python
+import humanize
+
+print(humanize.intcomma(1234567))
+```
+
+Version 2.0 was tested by installing `humanize 4.16.0` in a disposable virtual
+environment and importing it through the authenticated runner. The package was
+removed with the test environment afterward and is not a project dependency.
+
+Stop the server with `Ctrl+C` before changing its Python environment, install
+only packages you trust, and restart the server afterward. Do not run `pip`
+from student code. Packages installed only with `--user` may not be visible
+because Python execution uses isolated mode; an activated virtual environment
+is recommended.
+
+### Import limitations
+
+- Standard-library modules and compatible packages installed in the server's
+  Python environment work.
+- Separate Python tabs are independent documents in Version 2.0. A tab such as
+  `helpers.py` cannot yet be imported from `main.py`.
+- C++ standard-library headers such as `<iostream>`, `<vector>`, and
+  `<algorithm>` work with the configured compiler.
+- Third-party C++ libraries that require include paths, library paths, or
+  linker flags are not automatically supported by the fixed compile command.
+- GUI applications, hardware-specific packages, and packages requiring extra
+  operating-system components may need additional host configuration.
 
 ## Technology
 
@@ -56,10 +195,11 @@ notes, read the [changelog](CHANGELOG.md).
 - FastAPI
 - Uvicorn
 - WebSockets
-- HTML, CSS, and JavaScript
+- HTML, CSS and JavaScript
 - CodeMirror 5
 - Lucide icons
 - QRCode and Pillow
+- g++ or clang++ for C++17 compilation
 
 ## Project structure
 
@@ -69,12 +209,14 @@ notes, read the [changelog](CHANGELOG.md).
 ├── requirements.txt
 ├── test_app.py
 ├── data/
+│   ├── access_control.json
 │   ├── chat_history.json
 │   ├── code_state.json
+│   ├── file_line_authors.json
 │   ├── line_authors.json
-│   ├── permission_mode.json
 │   ├── snapshots.json
-│   └── users.json
+│   ├── students.json
+│   └── workspace_state.json
 ├── docs/
 │   └── images/
 └── static/
@@ -83,8 +225,9 @@ notes, read the [changelog](CHANGELOG.md).
     └── style.css
 ```
 
-The committed JSON files contain only clean demonstration data. Do not publish
-real messages, saved code, snapshots, or identifying user records.
+The committed JSON files contain only clean demonstration data. Before sharing
+a working copy, inspect every file in `data` and remove real student records,
+messages, code, snapshots and identifiers.
 
 ## Run locally
 
@@ -106,178 +249,119 @@ real messages, saved code, snapshots, or identifying user records.
 
 2. Install the dependencies.
 
-   ```bash
+   ```cmd
    python -m pip install -r requirements.txt
    ```
 
-3. Start the application.
+3. If C++ execution is required, install and verify g++ or clang++ as described
+   in [C++ compiler requirements](#c-compiler-requirements).
 
-   ```bash
+4. Start the application.
+
+   ```cmd
    python app.py
    ```
 
-4. Open `http://localhost:8000` on the host computer. Other users on the same
-   trusted LAN can open the Wi-Fi address printed in the terminal or scan the
-   QR code from the application.
+5. Open `http://localhost:8000` on the host computer. Other participants on the
+   same trusted LAN can open the Wi-Fi address printed in CMD or scan the QR code
+   displayed by the application.
+
+## Demonstration accounts
+
+Use only the fictional records included with this public release.
+
+### Admin
+
+- Password: `12345`
+
+### Student: John Smith
+
+- Student ID: `ST001`
+- Date of birth: `15/06/2005` (`2005-06-15` in the login date field)
+- Password: `test1`
+
+### Student: Bob
+
+- Student ID: `ST002`
+- Date of birth: `01/01/2005` (`2005-01-01` in the login date field)
+- Password: `test1`
+
+These are temporary demonstration passwords. Do not use them for real student
+accounts.
+
+## Change the testing passwords
+
+Version 2.0 reads its passwords from environment variables. Set them in the
+same Windows Command Prompt session before starting the server:
+
+```cmd
+set "LIVE_EDITOR_ADMIN_PASSWORD=choose-a-new-admin-password"
+set "LIVE_EDITOR_STUDENT_PASSWORD=choose-a-new-shared-student-password"
+python app.py
+```
+
+This is better than editing the source, but the student password is still
+shared by every student in Version 2.0. Proper individual authentication must
+be added before production use.
 
 ## Stop the server safely
 
-1. Return to the Command Prompt window where `python app.py` is running.
+1. Return to the CMD window where `python app.py` is running.
 2. Press `Ctrl+C` once.
-3. Wait for the server to finish stopping and return to the normal command
-   prompt.
-4. Close the Command Prompt window if it is no longer needed.
+3. Wait for the normal command prompt to return.
+4. Close CMD if it is no longer needed.
 
-Closing the Command Prompt window also stops the server, but `Ctrl+C` is safer.
-Code, messages, snapshots, usernames, line ownership, and the permission mode
-are normally saved when each change happens. Connected-user presence, cursor
-positions, selections, and typing indicators are temporary and are not saved.
-An edit that is still being transmitted at the exact moment of a sudden
-shutdown may be lost, and closing the window during a JSON write may damage
-that data file.
+Code, messages, snapshots, student records, ownership and access settings are
+normally saved when each change occurs. Active connections, cursor positions,
+selections, typing indicators and in-memory login sessions are temporary.
+Closing CMD during a JSON write or while the latest edit is still being sent
+can lose data, so `Ctrl+C` is safer than closing the window directly.
 
 ## Mobile access (experimental)
 
-The editor can be opened on a phone connected to the same Wi-Fi network as the
-host computer. Use the computer's LAN address, such as
-`http://192.168.x.x:8000`, or scan the QR code shown by the application. Do not
-use `localhost` on the phone because that refers to the phone itself.
-
-Version 1.2 is not yet fully optimized for small mobile screens. For a more
-usable temporary layout, enable **Desktop site** in the mobile browser and use
-the phone in landscape orientation. Full mobile optimization is still in
-progress.
+A phone on the same trusted Wi-Fi can open the LAN address or scan the QR code.
+Do not use `localhost` on the phone because that refers to the phone itself.
+Version 2.0 is not fully optimized for small screens; Desktop site mode and
+landscape orientation may provide a better temporary layout.
 
 ## After upgrading
 
-Stop and restart the Python server after replacing files. Then perform a hard
-refresh so the browser does not continue using an older cached JavaScript or
-CSS file:
+Stop and restart the Python server after replacing files. Then hard-refresh the
+browser so it does not use older cached JavaScript or CSS:
 
 - Windows or Linux: `Ctrl+F5`
 - macOS: `Cmd+Shift+R`
 
-If the old interface still appears, close that browser tab and open the LAN
-address again.
-
-## Version 1.2 demonstration access
-
-- Choose a listed name or select the custom Guest option.
-- Select an available cursor colour.
-
-> [!IMPORTANT]
-> **Important security notice — known Lecturer authentication issue:** During
-> pre-release browser execution
-> and testing of Version 1.2, we discovered that selecting **Lecturer** at the
-> user-selection screen does not request or verify the user-management panel
-> PIN. Further review confirmed that the same issue was also present in Versions
-> 1 and 1.1. The PIN protects only the **Lecturer Admin** username-management
-> panel; it does not authenticate the Lecturer role. Therefore, anyone on the
-> trusted LAN can select Lecturer when that username is not already active.
-> This historical behaviour is documented in Version 1.2 and should not be
-> treated as secure authentication. Do not expose this version to an untrusted
-> network or the public internet.
-
-## Change the Lecturer Admin User-Management Panel PIN
-
-This PIN unlocks only the Lecturer Admin user-management panel; it does not
-protect Lecturer selection or authenticate the Lecturer role. Version 1.2
-keeps the demonstration PIN in two files. The value must be changed in both
-places so the browser and server continue to match.
-
-1. Stop the running Python server.
-2. Open the project folder, then open `data/users.json` in a text editor.
-3. Find the following line:
-
-   ```json
-   "admin_pin": "1234"
-   ```
-
-4. Replace `1234` with the new PIN and save the file. For example:
-
-   ```json
-   "admin_pin": "5678"
-   ```
-
-5. Open `static/app.js` in a text editor.
-6. Search for the following line:
-
-   ```javascript
-   if (pin === '1234') { // Default PIN
-   ```
-
-7. Replace `1234` with the same new PIN and save the file. For example:
-
-   ```javascript
-   if (pin === '5678') { // Default PIN
-   ```
-
-8. Restart the application with `python app.py`.
-9. Hard-refresh the browser with `Ctrl+F5` on Windows or Linux, or
-   `Cmd+Shift+R` on macOS.
-
-This PIN is stored as readable text and can be seen in the browser's JavaScript.
-It is only a temporary demonstration lock for a trusted LAN. Do not reuse a
-personal, email, banking, or other important password.
-
 ## Testing
 
-Testing is optional and is not required every time the editor starts. The test
-script automatically checks that the following parts of the project work:
+The test suite uses isolated temporary data and does not modify the committed
+demonstration records. Stop the live server, then run:
 
-- LAN address detection and QR-code generation
-- User-list and information APIs
-- Server-side Python execution
-- Snapshot creation and retrieval
-- Duplicate-username protection
-- Group chat, direct messages, and read-state events
-- Line ownership, blank-line claiming, and ownership release
-- Restricted/Open Editing modes and Lecturer synchronization
-
-Stop the live server before running the tests, then use:
-
-```bash
+```cmd
 python test_app.py
 ```
 
-Each successful check displays `[PASS]`. The final line should say:
-
-```text
-ALL BACKEND & WEBSOCKET VERIFICATION TESTS PASSED!
-```
-
-The script uses the project's demonstration JSON files and may update saved
-code, chat, snapshot, ownership, or permission-mode data. Run it before adding
-real session data, or make a backup copy of the `data` folder first.
-
-## Current Version 1.2 limitations
-
-- Libraries or packages cannot be uploaded or installed from the editor.
-  Shared Python code can only import modules already installed on the host
-  computer. A required package must be installed by the host administrator,
-  normally with `python -m pip install package-name`, before the server starts.
-- The chat attachment button does not upload or transfer a file in Version 1.2.
-  It only adds the selected filename to the message field.
-- Version 1.2 supports Python execution only. C++ editing and compilation are
-  planned for a later version.
-- Mobile access is experimental and is not yet optimized for small screens.
+The suite checks authentication, student management, session enforcement,
+multi-file tabs, line ownership, access grants, chat, snapshots, Python
+execution, Python control flow/functions/classes/imports, Python/C++ standard
+input, input-size limits, and C++ functions/loops/STL compilation when a
+supported compiler is available.
 
 ## Security
 
-This prototype executes Python on the host computer and is not a complete
-security sandbox. Use it only on a trusted machine and trusted local network.
-The Lecturer role is not authenticated, and the user-management panel PIN is
-readable in the project files. Do not expose this version directly to the
-public internet.
+Participants can execute Python and C++ programs on the host computer. Use this
+prototype only with people you trust, on a trusted machine and isolated local
+network. Do not port-forward it, deploy it to a public server, or expose it to
+the public internet. Never use real student records in a public repository.
 
 ## Credits
 
-The original prototype was implemented by my lecturer with the help of an AI
-coding agent as a Rapid Application Development demonstration. Early feature
-ideas were shaped through discussions with me and feedback from my classmates.
+The project began as a Rapid Application Development demonstration. Early
+feature ideas were shaped through classroom discussions and feedback.
 
-This clean public-history preparation removes private runtime data while
-preserving the behaviour of the original Version 1.2 application.
+Version 2.0 combines later feedback-driven work on registered identities,
+multi-file collaboration, access control, resizable settings and focused direct
+messaging. Its public-history preparation removes private runtime data.
 
 ## Licence
 

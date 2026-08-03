@@ -1,0 +1,19 @@
+{
+  "tab_limit": 6,
+  "files": [
+    {
+      "id": "file_main",
+      "name": "main.py",
+      "language": "python",
+      "code": "# Version 2.0 Python example\n\ndef greet(name):\n    return f\"Hello, {name}!\"\n\nprint(greet(\"LAN collaborators\"))\n",
+      "revision": 0
+    },
+    {
+      "id": "file_cpp_demo",
+      "name": "hello.cpp",
+      "language": "cpp",
+      "code": "#include <iostream>\n\nint main() {\n    std::cout << \"C++ works in Version 2.0!\" << std::endl;\n    return 0;\n}\n",
+      "revision": 0
+    }
+  ]
+}

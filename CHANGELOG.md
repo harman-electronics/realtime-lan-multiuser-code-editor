@@ -3,6 +3,116 @@
 All notable changes to the Real-Time LAN Multiuser Code Editor will be recorded
 in this file.
 
+## Version 2.0 — Registered Accounts, Multi-File Workspace and Messaging
+
+Historical source: saved pre-appearance milestone from 27 July 2026
+
+Version 2.0 combines three originally planned releases: Admin/Student accounts
+and the multi-file workspace, resizable Admin Settings, and redesigned direct
+messaging.
+
+### Added
+
+- Added separate Admin and Student login flows with show/hide password buttons,
+  required fields and clear error messages.
+- Added environment-configurable Admin and shared Student testing passwords.
+- Added pre-registered student records containing full name, Student ID, date of
+  birth, optional information and active state.
+- Added Admin controls for adding, removing and viewing student records.
+- Added one-active-session enforcement for each Student account.
+- Added logout and temporary authenticated HTTP/WebSocket sessions.
+- Added Admin display-name editing and a crown role indicator.
+- Added a resizable Admin Settings panel.
+- Added a persistent multi-file workspace with shared browser-style tabs.
+- Added Python `.py` and C++ `.cpp` file creation.
+- Added an Admin-configurable file limit with a maximum of six tabs.
+- Added per-file language, code, revision and line-ownership persistence.
+- Added per-owner **Your Code Access** grants.
+- Added Admin-managed global editing grants, disabled by default.
+- Added Python execution and C++17 compile/run support on the host.
+- Added a per-file **Program Input (stdin)** box for Python `input()` and C++
+  `std::cin`, saved locally in each participant's browser.
+- Added a 20,000-character program-input limit.
+- Added automatic compiler discovery for `g++` and `clang++`.
+- Added `LIVE_EDITOR_CPP_COMPILER` for an explicit compatible compiler path.
+- Added a started-conversations direct-message list.
+- Added a focused conversation view, back navigation and conversation composer.
+- Added restored clickable unread direct-message notifications and read state.
+- Added isolated automated tests for authentication, accounts, tabs,
+  permissions, messaging, snapshots, execution, standard input, error handling,
+  and timeouts.
+- Added regression coverage for Python imports, `for`/`while`, functions,
+  recursion, classes and comprehensions, plus C++ functions, loops and STL
+  headers.
+- Added real g++ compile/run verification and a 12-case Python/C++ execution
+  matrix.
+- Added a disposable installation test that installed `humanize 4.16.0` and
+  imported it through `/api/run`; the test package was removed afterward.
+
+### Changed and replaced
+
+- Replaced the unauthenticated Lecturer selector with Admin and pre-registered
+  Student roles.
+- Replaced the Version 1.x PIN-only allowed-username panel with password-gated
+  Admin student-record management.
+- Replaced the single shared `main.py` document with a multi-file Python/C++
+  workspace.
+- Replaced the class-wide Restricted/Open Editing mode with per-owner grants
+  and Admin-managed global access.
+- Replaced the direct-message view that exposed every possible user with a
+  sorted list of conversations that have actually been started.
+- Replaced the fixed Admin Settings dialog with a user-resizable panel.
+- Continued allowing any participant to create blank lines without changing
+  another participant's owned content.
+- Continued Group Chat as a separate shared conversation.
+- Fixed C++ `std::cin` and Python `input()` receiving immediate end-of-input,
+  which previously caused missing input or unpredictable program values.
+- Changed local CSS and JavaScript URLs to include a Version 2.0 cache
+  identifier, preventing upgraded pages from using an older cached runner.
+- Documented that installed Python packages work when they are available in the
+  server's active environment, while separate workspace tabs cannot yet import
+  one another.
+
+### Removed
+
+- Removed anonymous/custom Guest selection from this stage of the history.
+- Removed the old allowed-username textarea workflow.
+- Removed the unused Version 1.x `data/users.json` file and its obsolete
+  username-management PIN.
+- Removed the floating name cloud displayed above another user's typing cursor.
+- Removed the old class-wide Restricted/Open permission button.
+
+### University and privacy warning
+
+- Student identity must be pre-registered by the lecturer acting as Admin, or
+  by a trusted Admin in a small independent study group.
+- This is a controlled-enrolment prototype, not official university identity
+  authentication or institutional SSO.
+- Names, Student IDs, dates of birth, code, chats, snapshots and permissions are
+  stored locally as readable JSON on the host computer.
+- The application has no cloud synchronization and does not intentionally
+  upload these records, but public deployment or publishing a populated `data`
+  folder can expose personal information.
+- Version 2.0 must be used only on a trusted host and trusted LAN. It must not be
+  exposed to the public internet or used with real records in a public repo.
+- Python and C++ execution is not a complete security sandbox; every
+  participant must be trusted.
+
+### Compiler note
+
+- C++ execution requires g++ or clang++ on the host computer. Connected
+  students do not need a compiler on their devices.
+- An arbitrary compiler is not automatically supported. The current command
+  uses GCC/Clang-style C++17 flags, so Microsoft `cl.exe` requires a future code
+  change.
+
+### Purpose
+
+Version 2.0 moves the project from anonymous classroom selection toward a
+controlled small-group collaboration model. It associates work with
+pre-registered identities, adds shared Python/C++ files and granular access,
+and makes direct conversations and administration easier to manage.
+
 ## Version 1.2 — Blank-Line Claiming and Permission Modes
 
 Historical source: `fbcbeeef`

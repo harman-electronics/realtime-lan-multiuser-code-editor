@@ -1,378 +1,489 @@
-import asyncio
 import json
-import time
+import shutil
+import tempfile
+import unittest
+from pathlib import Path
 
-import anyio
 from fastapi.testclient import TestClient
-from app import app, ConnectionManager, get_local_ip, generate_qr_code
 
-client = TestClient(app)
-WEBSOCKET_EVENT_TIMEOUT = 5.0
+import app as app_module
 
 
-async def _receive_json_with_timeout(websocket, timeout):
-    """Receive one test WebSocket message without allowing the test to hang."""
-    with anyio.fail_after(timeout):
-        message = await websocket._send_rx.receive()
-
-    websocket._raise_on_close(message)
-    if "text" in message:
-        return json.loads(message["text"])
-    return json.loads(message["bytes"].decode("utf-8"))
-
-
-def receive_event(websocket, event_type, predicate=None, timeout=WEBSOCKET_EVENT_TIMEOUT):
-    """Wait for a matching event and retain out-of-order events for later checks."""
-    deadline = time.monotonic() + timeout
-    received_types = []
-    event_buffer = getattr(websocket, "_test_event_buffer", [])
-    websocket._test_event_buffer = event_buffer
-
-    for index, event in enumerate(event_buffer):
-        if event.get("type") == event_type and (
-            predicate is None or predicate(event)
-        ):
-            return event_buffer.pop(index)
-
-    while True:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            break
-
-        try:
-            event = websocket.portal.call(
-                _receive_json_with_timeout,
-                websocket,
-                remaining,
-            )
-        except TimeoutError:
-            break
-
-        received_types.append(event.get("type", "<missing type>"))
-        if event.get("type") == event_type and (
-            predicate is None or predicate(event)
-        ):
-            return event
-        event_buffer.append(event)
-
-    received_summary = ", ".join(received_types) or "no events"
-    raise AssertionError(
-        f"Timed out after {timeout:.1f}s waiting for WebSocket event "
-        f"'{event_type}'. Received: {received_summary}."
-    )
-
-def test_local_ip_and_qr():
-    ip = get_local_ip()
-    assert ip is not None
-    print(f"[PASS] Local LAN IP detected: {ip}")
-    
-    qr = generate_qr_code(f"http://{ip}:8000")
-    assert qr.startswith("data:image/png;base64,")
-    print("[PASS] QR Code base64 generation working!")
-
-def test_api_info():
-    response = client.get("/api/info")
-    assert response.status_code == 200
-    data = response.json()
-    assert "ip" in data
-    assert "qr_code" in data
-    assert "palette" in data
-    assert len(data["palette"]) == 12
-    print(f"[PASS] /api/info response valid with {len(data['palette'])} colors.")
-
-def test_api_users():
-    response = client.get("/api/users")
-    assert response.status_code == 200
-    data = response.json()
-    assert "allowed_users" in data
-    assert "Alice" in data["allowed_users"]
-    print("[PASS] /api/users retrieved allowed usernames!")
-
-def test_run_code():
-    code_req = {
-        "code": "students = ['Alice', 'Bob']\nfor s in students:\n    print(f'Hello {s}')\n"
-    }
-    response = client.post("/api/run", json=code_req)
-    assert response.status_code == 200
-    data = response.json()
-    assert "stdout" in data
-    assert "Hello Alice" in data["stdout"]
-    assert "Hello Bob" in data["stdout"]
-    assert data["returncode"] == 0
-    print(f"[PASS] Live Python Code Execution successful!\nOutput:\n{data['stdout']}")
-
-def test_snapshots():
-    snap_req = {
-        "label": "Test Lesson 1",
-        "code": "print('snapshot test')",
-        "author": "Lecturer"
-    }
-    response = client.post("/api/snapshots", json=snap_req)
-    assert response.status_code == 200
-    assert response.json()["status"] == "success"
-
-    res2 = client.get("/api/snapshots")
-    snaps = res2.json()["snapshots"]
-    assert len(snaps) > 0
-    assert snaps[0]["label"] == "Test Lesson 1"
-    print("[PASS] Snapshots API create & list verified!")
-
-
-def test_line_ownership_rules():
-    manager = ConnectionManager()
-    manager.permission_mode = "restricted"
-    manager.code_state = {
-        "code": "print('owned')\n\nprint('second owner')",
-        "language": "python",
-    }
-    manager.line_authors = {
-        "0": {"author": "Alice", "color": "#FF5722"},
-        "2": {"author": "Guest_Charlie", "color": "#9C27B0"},
-    }
-
-    assert manager.can_user_edit_range("Alice", 0, 0)
-    assert not manager.can_user_edit_range("Guest_Charlie", 0, 0)
-    assert manager.can_user_edit_range("Lecturer", 0, 0)
-    assert manager.can_user_edit_range("Admin", 0, 0)
-    assert manager.can_user_edit_range("Guest_Charlie", 1, 1)
-
-    manager.set_permission_mode("open")
-    assert manager.can_user_edit_range("Guest_Charlie", 0, 0)
-
-    manager.set_permission_mode("restricted")
-    manager.apply_delta(
-        {"line": 0, "ch": 0},
-        {"line": 0, "ch": len("print('owned')")},
-        [""],
-        "Alice",
-        "#FF5722",
-    )
-    assert manager.code_state["code"].split("\n")[0] == ""
-    assert "0" not in manager.line_authors
-    assert manager.can_user_edit_range("Guest_Charlie", 0, 0)
-    print("[PASS] Restricted/Open modes, blank-line access & ownership release verified!")
-
-def test_websocket_collaboration():
-    with client.websocket_connect("/ws/client_test_1") as ws1:
-        # Initial message
-        data1 = receive_event(ws1, "init")
-        
-        # Client 1 joins with color #FF5722
-        ws1.send_json({
-            "type": "join",
-            "username": "Alice",
-            "color": "#FF5722"
-        })
-        
-        msg_history = receive_event(ws1, "chat_history")
-
-        join_msg = receive_event(
-            ws1,
-            "user_joined",
-            lambda event: event["user"]["username"] == "Alice",
+class LiveEditorTestCase(unittest.TestCase):
+    def setUp(self):
+        self.temp_directory = tempfile.TemporaryDirectory()
+        root = Path(self.temp_directory.name)
+        self.path_names = (
+            "STUDENTS_FILE",
+            "WORKSPACE_FILE",
+            "FILE_AUTHORS_FILE",
+            "ACCESS_FILE",
+            "SNAPSHOTS_FILE",
+            "CHAT_FILE",
+            "CODE_FILE",
+            "LEGACY_LINE_AUTHORS_FILE",
         )
-        assert join_msg["user"]["username"] == "Alice"
-        assert join_msg["claimed_colors"]["#FF5722"] == "Alice"
-        print("[PASS] WebSocket join, chat history & exclusive color lock verified for Alice (#FF5722)!")
+        self.original_paths = {
+            name: getattr(app_module, name) for name in self.path_names
+        }
+        self.original_manager = app_module.manager
 
-        # Client 2 connects and tries claiming the same username "Alice"
-        with client.websocket_connect("/ws/client_test_2") as ws2:
-            data2 = receive_event(ws2, "init")
-            ws2.send_json({
-                "type": "join",
-                "username": "Alice", # Same name as already active user
-                "color": "#9C27B0"
-            })
-            err_msg_user = receive_event(
-                ws2,
-                "error",
-                lambda event: "already logged in" in event.get("message", ""),
-            )
-            assert "already logged in" in err_msg_user["message"]
-            print("[PASS] Duplicate Username Prevention Enforced! Client 2 was blocked from taking Alice's name.")
+        replacement_paths = {
+            "STUDENTS_FILE": root / "students.json",
+            "WORKSPACE_FILE": root / "workspace_state.json",
+            "FILE_AUTHORS_FILE": root / "file_line_authors.json",
+            "ACCESS_FILE": root / "access_control.json",
+            "SNAPSHOTS_FILE": root / "snapshots.json",
+            "CHAT_FILE": root / "chat_history.json",
+            "CODE_FILE": root / "code_state.json",
+            "LEGACY_LINE_AUTHORS_FILE": root / "line_authors.json",
+        }
+        for name, path in replacement_paths.items():
+            setattr(app_module, name, str(path))
 
-            # Client 2 connects with unique Guest Name "Guest_Charlie"
-            ws2.send_json({
-                "type": "join",
-                "username": "Guest_Charlie",
-                "color": "#9C27B0"
-            })
-            msg_hist2 = receive_event(ws2, "chat_history")
+        replacement_paths["STUDENTS_FILE"].write_text(
+            json.dumps(app_module.DEFAULT_STUDENTS),
+            encoding="utf-8",
+        )
+        replacement_paths["WORKSPACE_FILE"].write_text(
+            json.dumps(
+                {
+                    "tab_limit": 6,
+                    "files": [
+                        {
+                            "id": "file_main",
+                            "name": "main.py",
+                            "language": "python",
+                            "code": "",
+                            "revision": 0,
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        replacement_paths["FILE_AUTHORS_FILE"].write_text(
+            json.dumps({"file_main": {}}),
+            encoding="utf-8",
+        )
+        replacement_paths["ACCESS_FILE"].write_text(
+            json.dumps({"owner_grants": {}, "global_editors": []}),
+            encoding="utf-8",
+        )
+        replacement_paths["SNAPSHOTS_FILE"].write_text("[]", encoding="utf-8")
+        replacement_paths["CHAT_FILE"].write_text("[]", encoding="utf-8")
+        replacement_paths["CODE_FILE"].write_text(
+            json.dumps({"code": "", "language": "python"}),
+            encoding="utf-8",
+        )
+        replacement_paths["LEGACY_LINE_AUTHORS_FILE"].write_text(
+            "{}",
+            encoding="utf-8",
+        )
 
-            join_msg2 = receive_event(
-                ws2,
-                "user_joined",
-                lambda event: event["user"]["username"] == "Guest_Charlie",
-            )
-            assert join_msg2["user"]["username"] == "Guest_Charlie"
+        self.manager = app_module.ConnectionManager()
+        app_module.manager = self.manager
+        self.client = TestClient(app_module.app)
 
-            # ws1 gets broadcast of ws2 joining
-            ws1_user2_joined = receive_event(
-                ws1,
-                "user_joined",
-                lambda event: event["user"]["username"] == "Guest_Charlie",
-            )
-            print("[PASS] Custom / Guest Name Join Verified for Guest_Charlie!")
+    def tearDown(self):
+        self.client.close()
+        app_module.manager = self.original_manager
+        for name, path in self.original_paths.items():
+            setattr(app_module, name, path)
+        self.temp_directory.cleanup()
 
-            # Alice sends Group Chat Message
-            ws1.send_json({
-                "type": "chat_message",
-                "target": "group",
-                "text": "Hello class!"
-            })
-            chat_msg_ws1 = receive_event(
-                ws1,
-                "chat_message",
-                lambda event: event["message"]["text"] == "Hello class!",
-            )
-            chat_msg_ws2 = receive_event(
-                ws2,
-                "chat_message",
-                lambda event: event["message"]["text"] == "Hello class!",
-            )
-            assert chat_msg_ws1["message"]["text"] == "Hello class!"
-            assert chat_msg_ws2["message"]["text"] == "Hello class!"
-            print("[PASS] Group Chat Broadcasting Verified!")
+    def login_admin(self):
+        response = self.client.post(
+            "/api/auth/login",
+            json={"role": "admin", "password": "12345"},
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        return response.json()["token"]
 
-            # Alice sends Private Direct Message to Guest_Charlie
-            ws1.send_json({
-                "type": "chat_message",
-                "target": "Guest_Charlie",
-                "text": "Private question for Charlie"
-            })
-            pm_ws1 = receive_event(
-                ws1,
-                "chat_message",
-                lambda event: event["message"]["text"] == "Private question for Charlie",
+    def login_student(self, student_id="ST001", dob="2005-06-15"):
+        response = self.client.post(
+            "/api/auth/login",
+            json={
+                "role": "student",
+                "student_id": student_id,
+                "date_of_birth": dob,
+                "password": "test1",
+            },
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        return response.json()["token"]
+
+    @staticmethod
+    def auth_header(token):
+        return {"Authorization": f"Bearer {token}"}
+
+    def test_role_logins_and_saved_student_name(self):
+        wrong_admin = self.client.post(
+            "/api/auth/login",
+            json={"role": "admin", "password": "wrong"},
+        )
+        self.assertEqual(wrong_admin.status_code, 401)
+        self.assertEqual(
+            wrong_admin.json()["detail"],
+            "Incorrect Admin password.",
+        )
+
+        wrong_student = self.client.post(
+            "/api/auth/login",
+            json={
+                "role": "student",
+                "student_id": "ST001",
+                "date_of_birth": "2000-01-01",
+                "password": "test1",
+            },
+        )
+        self.assertEqual(wrong_student.status_code, 401)
+
+        token = self.login_student()
+        current = self.client.get(
+            "/api/auth/me",
+            headers=self.auth_header(token),
+        )
+        self.assertEqual(current.status_code, 200)
+        self.assertEqual(
+            current.json()["user"],
+            {
+                "account_id": "student_st001",
+                "username": "John Smith",
+                "role": "student",
+            },
+        )
+
+    def test_admin_can_add_and_remove_students(self):
+        admin_token = self.login_admin()
+        added = self.client.post(
+            "/api/students",
+            headers=self.auth_header(admin_token),
+            json={
+                "full_name": "Alice Jones",
+                "student_id": "ST003",
+                "date_of_birth": "20/02/2005",
+                "other_info": {"class": "A"},
+            },
+        )
+        self.assertEqual(added.status_code, 200, added.text)
+        student = added.json()["student"]
+        self.assertEqual(student["date_of_birth"], "2005-02-20")
+        self.assertEqual(
+            self.manager.get_student_by_id("ST003")["full_name"],
+            "Alice Jones",
+        )
+
+        duplicate = self.client.post(
+            "/api/students",
+            headers=self.auth_header(admin_token),
+            json={
+                "full_name": "Duplicate",
+                "student_id": "ST003",
+                "date_of_birth": "2005-02-20",
+            },
+        )
+        self.assertEqual(duplicate.status_code, 409)
+
+        removed = self.client.delete(
+            f"/api/students/{student['account_id']}",
+            headers=self.auth_header(admin_token),
+        )
+        self.assertEqual(removed.status_code, 200)
+        self.assertIsNone(self.manager.get_student_by_id("ST003"))
+
+    def test_only_one_active_student_session(self):
+        token = self.login_student()
+        with self.client.websocket_connect("/ws/john_first") as websocket:
+            self.assertEqual(websocket.receive_json()["type"], "init")
+            websocket.send_json(
+                {"type": "join", "token": token, "color": "#2196F3"}
             )
-            pm_ws2 = receive_event(
-                ws2,
-                "chat_message",
-                lambda event: event["message"]["text"] == "Private question for Charlie",
+            self.assertEqual(websocket.receive_json()["type"], "join_success")
+            self.assertEqual(
+                websocket.receive_json()["type"],
+                "presence_updated",
             )
 
-            # Charlie sends mark_read to Alice's conversation
-            ws2.send_json({
-                "type": "mark_read",
-                "target": "Alice"
-            })
-            read_history = receive_event(ws2, "chat_history")
-            print("[PASS] DM Mark Read & Read State Tracking Verified!")
-            # Alice claims a previously unowned line.
-            ws1.send_json({
-                "type": "code_delta",
-                "from": {"line": 1, "ch": 0},
-                "to": {"line": 1, "ch": 0},
-                "text": ["# Alice edit\n"]
-            })
-            delta_msg_ws2 = receive_event(
-                ws2,
-                "code_delta",
-                lambda event: event["text"] == ["# Alice edit\n"],
+            duplicate = self.client.post(
+                "/api/auth/login",
+                json={
+                    "role": "student",
+                    "student_id": "ST001",
+                    "date_of_birth": "2005-06-15",
+                    "password": "test1",
+                },
             )
-            assert delta_msg_ws2["text"] == ["# Alice edit\n"]
+            self.assertEqual(duplicate.status_code, 409)
+            self.assertIn("active session", duplicate.json()["detail"])
 
-            # Charlie cannot edit the line Alice just claimed.
-            ws2.send_json({
-                "type": "code_delta",
-                "from": {"line": 1, "ch": 0},
-                "to": {"line": 1, "ch": 0},
-                "text": ["# Charlie edit\n"]
-            })
-            permission_denied = receive_event(
-                ws2,
-                "permission_denied",
-                lambda event: "read-only" in event.get("message", ""),
+    def test_admin_file_tabs_and_six_tab_limit(self):
+        admin_token = self.login_admin()
+        with self.client.websocket_connect("/ws/admin_files") as websocket:
+            self.assertEqual(websocket.receive_json()["type"], "init")
+            websocket.send_json(
+                {"type": "join", "token": admin_token, "color": "#FF5722"}
             )
-            assert "read-only" in permission_denied["message"]
-            print("[PASS] WebSocket line ownership enforcement verified!")
-
-            # Alice's active-line typing indicator is synchronized to Charlie.
-            ws1.send_json({
-                "type": "typing_line",
-                "line": 1,
-                "is_typing": True
-            })
-            typing_line_msg = receive_event(
-                ws2,
-                "typing_line_update",
-                lambda event: event.get("line") == 1,
+            self.assertEqual(websocket.receive_json()["type"], "join_success")
+            self.assertEqual(
+                websocket.receive_json()["type"],
+                "presence_updated",
             )
-            assert typing_line_msg["username"] == "Alice"
-            assert typing_line_msg["is_typing"] is True
-            print("[PASS] Real-time synchronized line typing highlights verified!")
 
-            # A Lecturer can enable global Open Editing mode for the class.
-            with client.websocket_connect("/ws/client_test_3") as ws3:
-                lecturer_init = receive_event(ws3, "init")
-                assert lecturer_init["permission_mode"] == "restricted"
-                ws3.send_json({
-                    "type": "join",
-                    "username": "Lecturer",
-                    "color": "#38BDF8",
-                })
-                receive_event(ws3, "chat_history")
-                receive_event(
-                    ws3,
-                    "user_joined",
-                    lambda event: event["user"]["username"] == "Lecturer",
+            for index in range(1, 6):
+                language = "cpp" if index % 2 else "python"
+                websocket.send_json(
+                    {
+                        "type": "create_file",
+                        "name": f"lesson_{index}",
+                        "language": language,
+                    }
                 )
-                receive_event(
-                    ws1,
-                    "user_joined",
-                    lambda event: event["user"]["username"] == "Lecturer",
-                )
-                receive_event(
-                    ws2,
-                    "user_joined",
-                    lambda event: event["user"]["username"] == "Lecturer",
-                )
+                update = websocket.receive_json()
+                self.assertEqual(update["type"], "workspace_updated")
 
-                ws3.send_json({
-                    "type": "toggle_permission_mode",
-                    "mode": "open",
-                })
-                for websocket in (ws1, ws2, ws3):
-                    mode_event = receive_event(
-                        websocket,
-                        "permission_mode_updated",
-                        lambda event: event.get("permission_mode") == "open",
-                    )
-                    assert mode_event["permission_mode"] == "open"
+            self.assertEqual(len(self.manager.workspace["files"]), 6)
+            self.assertEqual(
+                self.manager.workspace["files"][1]["name"],
+                "lesson_1.cpp",
+            )
 
-                # Charlie can now edit the line that Alice owns.
-                ws2.send_json({
-                    "type": "code_delta",
-                    "from": {"line": 1, "ch": 0},
-                    "to": {"line": 1, "ch": 0},
-                    "text": ["# Open mode edit\n"],
-                })
-                open_delta = receive_event(
-                    ws1,
-                    "code_delta",
-                    lambda event: event["text"] == ["# Open mode edit\n"],
-                )
-                assert open_delta["author"] == "Guest_Charlie"
+            websocket.send_json(
+                {
+                    "type": "create_file",
+                    "name": "too_many",
+                    "language": "python",
+                }
+            )
+            error = websocket.receive_json()
+            self.assertEqual(error["type"], "error")
+            self.assertIn("tab limit", error["message"].lower())
 
-                ws3.send_json({
-                    "type": "toggle_permission_mode",
-                    "mode": "restricted",
-                })
-                for websocket in (ws1, ws2, ws3):
-                    receive_event(
-                        websocket,
-                        "permission_mode_updated",
-                        lambda event: event.get("permission_mode") == "restricted",
-                    )
-                print("[PASS] Lecturer global permission-mode synchronization verified!")
+    def test_line_insertion_and_access_permissions(self):
+        john = {
+            "account_id": "student_st001",
+            "username": "John Smith",
+            "role": "student",
+            "color": "#2196F3",
+        }
+        bob = {
+            "account_id": "student_st002",
+            "username": "Bob",
+            "role": "student",
+            "color": "#9C27B0",
+        }
+        self.manager.workspace["files"][0]["code"] = "print('John')"
+        self.manager.line_authors["file_main"] = {
+            "0": {
+                "account_id": john["account_id"],
+                "author": john["username"],
+                "color": john["color"],
+            }
+        }
+        self.assertFalse(
+            self.manager.can_user_edit_range(bob, "file_main", 0, 0)
+        )
+
+        file_data = self.manager.insert_blank_lines(
+            "file_main",
+            after_line=0,
+            count=3,
+        )
+        self.assertEqual(file_data["code"], "print('John')\n\n\n")
+        self.assertEqual(
+            self.manager.line_authors["file_main"]["0"]["account_id"],
+            "student_st001",
+        )
+
+        self.manager.access_control["owner_grants"] = {
+            "student_st001": ["student_st002"]
+        }
+        self.assertTrue(
+            self.manager.can_user_edit_range(bob, "file_main", 0, 0)
+        )
+
+        self.manager.access_control["owner_grants"] = {}
+        self.manager.access_control["global_editors"] = ["student_st002"]
+        self.assertTrue(
+            self.manager.can_user_edit_range(bob, "file_main", 0, 0)
+        )
+
+    def test_access_settings_report_incoming_and_global_permissions(self):
+        john_token = self.login_student("ST001", "2005-06-15")
+        bob_token = self.login_student("ST002", "2005-01-01")
+        admin_token = self.login_admin()
+
+        owner_grant = self.client.put(
+            "/api/access/owner/student_st002",
+            headers=self.auth_header(john_token),
+            json={"enabled": True},
+        )
+        self.assertEqual(owner_grant.status_code, 200)
+
+        bob_access = self.client.get(
+            "/api/access",
+            headers=self.auth_header(bob_token),
+        )
+        self.assertEqual(bob_access.status_code, 200)
+        self.assertIn(
+            "student_st001",
+            bob_access.json()["editable_owner_ids"],
+        )
+
+        global_grant = self.client.put(
+            "/api/access/global/student_st002",
+            headers=self.auth_header(admin_token),
+            json={"enabled": True},
+        )
+        self.assertEqual(global_grant.status_code, 200)
+        bob_access = self.client.get(
+            "/api/access",
+            headers=self.auth_header(bob_token),
+        )
+        self.assertTrue(bob_access.json()["global_editor"])
+
+    def test_admin_name_and_role_data(self):
+        admin_token = self.login_admin()
+        response = self.client.put(
+            "/api/admin/name",
+            headers=self.auth_header(admin_token),
+            json={"display_name": "Professor Ada"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["username"], "Professor Ada")
+        self.assertEqual(
+            self.manager.get_session(admin_token)["role"],
+            "admin",
+        )
+        self.assertEqual(
+            self.manager.get_session(admin_token)["username"],
+            "Professor Ada",
+        )
+
+    def test_python_execution_requires_login(self):
+        unauthenticated = self.client.post(
+            "/api/run",
+            json={"code": "print('blocked')", "language": "python"},
+        )
+        self.assertEqual(unauthenticated.status_code, 401)
+
+        token = self.login_admin()
+        response = self.client.post(
+            "/api/run",
+            headers=self.auth_header(token),
+            json={"code": "print('working')", "language": "python"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["stdout"].strip(), "working")
+
+        input_response = self.client.post(
+            "/api/run",
+            headers=self.auth_header(token),
+            json={
+                "code": "name = input()\nprint(f'Hello, {name}!')",
+                "language": "python",
+                "stdin": "LAN student\n",
+            },
+        )
+        self.assertEqual(input_response.status_code, 200, input_response.text)
+        self.assertEqual(input_response.json()["stdout"].strip(), "Hello, LAN student!")
+
+        oversized_input = self.client.post(
+            "/api/run",
+            headers=self.auth_header(token),
+            json={
+                "code": "print('blocked')",
+                "language": "python",
+                "stdin": "x" * (app_module.MAX_STDIN_SIZE + 1),
+            },
+        )
+        self.assertEqual(oversized_input.status_code, 413)
+
+    def test_python_control_flow_functions_classes_and_imports(self):
+        token = self.login_admin()
+        response = self.client.post(
+            "/api/run",
+            headers=self.auth_header(token),
+            json={
+                "language": "python",
+                "code": (
+                    "import math\n"
+                    "from collections import Counter\n"
+                    "def factorial(value):\n"
+                    "    return 1 if value <= 1 else value * factorial(value - 1)\n"
+                    "class Greeter:\n"
+                    "    def __init__(self, name):\n"
+                    "        self.name = name\n"
+                    "    def message(self):\n"
+                    "        return f'Hello, {self.name}!'\n"
+                    "total = 0\n"
+                    "for number in range(1, 5):\n"
+                    "    if number % 2 == 0:\n"
+                    "        total += number\n"
+                    "remaining = 2\n"
+                    "while remaining > 0:\n"
+                    "    total += 1\n"
+                    "    remaining -= 1\n"
+                    "print(factorial(5))\n"
+                    "print(Greeter('Bob').message())\n"
+                    "print(total, math.isqrt(81), Counter('banana')['a'])\n"
+                ),
+            },
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        result = response.json()
+        self.assertEqual(result["returncode"], 0, result.get("stderr"))
+        self.assertEqual(
+            result["stdout"].strip(),
+            "120\nHello, Bob!\n8 9 3",
+        )
+
+    @unittest.skipUnless(
+        shutil.which("g++") or shutil.which("clang++"),
+        "g++ or clang++ is not installed on the host",
+    )
+    def test_cpp17_compilation_and_execution(self):
+        token = self.login_admin()
+        response = self.client.post(
+            "/api/run",
+            headers=self.auth_header(token),
+            json={
+                "code": (
+                    "#include <algorithm>\n"
+                    "#include <iostream>\n"
+                    "#include <vector>\n"
+                    "int square(int value) { return value * value; }\n"
+                    "int main() {\n"
+                    "    int first = 0;\n"
+                    "    int second = 0;\n"
+                    "    if (!(std::cin >> first >> second)) return 1;\n"
+                    "    std::vector<int> values{3, 1, 2};\n"
+                    "    std::sort(values.begin(), values.end());\n"
+                    "    int square_total = 0;\n"
+                    "    for (int value : values) square_total += square(value);\n"
+                    "    int countdown = 2;\n"
+                    "    while (countdown > 0) --countdown;\n"
+                    "    std::cout << \"Sum: \" << first + second << std::endl;\n"
+                    "    std::cout << \"Product: \" << first * second << std::endl;\n"
+                    "    std::cout << \"Squares: \" << square_total << std::endl;\n"
+                    "    std::cout << \"Countdown: \" << countdown << std::endl;\n"
+                    "    return 0;\n"
+                    "}\n"
+                ),
+                "language": "cpp",
+                "stdin": "12 5\n",
+                "timeout": 5,
+            },
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        result = response.json()
+        self.assertEqual(result["returncode"], 0, result.get("stderr"))
+        self.assertEqual(result["stage"], "run")
+        self.assertEqual(
+            result["stdout"].strip(),
+            "Sum: 17\nProduct: 60\nSquares: 14\nCountdown: 0",
+        )
+
 
 if __name__ == "__main__":
-    print("\n--- RUNNING BACKEND & WEBSOCKET VERIFICATION ---")
-    test_local_ip_and_qr()
-    test_api_info()
-    test_api_users()
-    test_run_code()
-    test_snapshots()
-    test_line_ownership_rules()
-    test_websocket_collaboration()
-    print("\nALL BACKEND & WEBSOCKET VERIFICATION TESTS PASSED!\n")
+    unittest.main(verbosity=2)

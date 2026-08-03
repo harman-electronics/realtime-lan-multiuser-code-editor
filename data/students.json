@@ -1,0 +1,18 @@
+[
+  {
+    "account_id": "student_st001",
+    "full_name": "John Smith",
+    "student_id": "ST001",
+    "date_of_birth": "2005-06-15",
+    "other_info": {},
+    "active": true
+  },
+  {
+    "account_id": "student_st002",
+    "full_name": "Bob",
+    "student_id": "ST002",
+    "date_of_birth": "2005-01-01",
+    "other_info": {},
+    "active": true
+  }
+]
