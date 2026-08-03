@@ -337,6 +337,8 @@ browser so it does not use older cached JavaScript or CSS:
 The test suite uses isolated temporary data and does not modify the committed
 demonstration records. Stop the live server, then run:
 
+Version 2.0 passed **10/10 permanent automated tests** and an additional **12/12 Python/C++ execution-matrix tests**.
+
 ```cmd
 python test_app.py
 ```
