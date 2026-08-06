@@ -1,9 +1,9 @@
-# Live WiFi Code Editor — Developer Notes
+# Real-Time LAN Multiuser Code Editor — Developer Notes
 
 ## Overview
 
-The Live WiFi Code Editor is a FastAPI and WebSocket classroom application designed
-for devices connected to the same local network.
+The Real-Time LAN Multiuser Code Editor is a FastAPI and WebSocket collaboration
+application designed for trusted devices connected to the same local network.
 
 - Backend: Python, FastAPI, Uvicorn, WebSockets
 - Frontend: HTML, CSS, JavaScript, CodeMirror 5
@@ -154,6 +154,20 @@ indexes are shifted so existing code keeps its owner.
 - Offline students remain available in conversation and access lists.
 - Direct-message conversations are sorted by latest message.
 - Read state is persisted in `chat_history.json`.
+- The original sender may edit or delete a message.
+- Admin may delete any message but cannot edit another participant's message.
+- Edits and deletions are persisted and broadcast to the affected participants.
+
+## Appearance and layout
+
+- The main workspace uses the full browser area and contains adjustable panels.
+- Light, dark, and automatic themes can be applied over a wallpaper.
+- Wallpaper image and appearance preferences are saved in the current browser
+  only; they are not synchronized or written to the server's `data/` directory.
+- Wallpaper layout supports Fill and Fit, including a blurred ambient background
+  for fitted images.
+- Adaptive colours, dimming, visibility, and panel blur are user-adjustable.
+- The Problems tab and controls without implemented actions are removed.
 
 ## Data files
 
@@ -186,8 +200,11 @@ python app.py
 
 Run isolated tests:
 
-```bash
-python -m unittest -v
+```cmd
+python test_app.py
+python test_execution_matrix.py
 ```
 
-The test suite uses temporary directories and does not modify classroom data.
+The permanent suite contains 12 isolated tests. The separate execution matrix
+contains 12 Python/C++ cases and requires a supported compiler for its C++
+checks. Neither suite modifies the committed classroom data.

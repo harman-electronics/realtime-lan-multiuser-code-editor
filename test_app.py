@@ -360,6 +360,52 @@ class LiveEditorTestCase(unittest.TestCase):
             "Professor Ada",
         )
 
+    def test_chat_message_editing_enforces_ownership_and_persists(self):
+        message = {
+            "id": 101,
+            "sender_account_id": "student_st001",
+            "sender": "John Smith",
+            "sender_role": "student",
+            "target": "group",
+            "text": "Original message",
+        }
+        self.manager.add_chat_message(message)
+        john = {"account_id": "student_st001", "role": "student"}
+        bob = {"account_id": "student_st002", "role": "student"}
+
+        with self.assertRaises(app_module.HTTPException) as denied:
+            self.manager.edit_chat_message(101, bob, "Changed by Bob")
+        self.assertEqual(denied.exception.status_code, 403)
+
+        edited = self.manager.edit_chat_message(101, john, "Updated safely")
+        self.assertEqual(edited["text"], "Updated safely")
+        self.assertTrue(edited["edited"])
+        stored = json.loads(Path(app_module.CHAT_FILE).read_text(encoding="utf-8"))
+        self.assertEqual(stored[0]["text"], "Updated safely")
+
+    def test_chat_message_deletion_permissions_and_persistence(self):
+        message = {
+            "id": 202,
+            "sender_account_id": "student_st001",
+            "sender": "John Smith",
+            "sender_role": "student",
+            "target": "group",
+            "text": "Remove this message",
+        }
+        self.manager.add_chat_message(message)
+        bob = {"account_id": "student_st002", "role": "student"}
+        admin = {"account_id": "admin", "role": "admin"}
+
+        with self.assertRaises(app_module.HTTPException) as denied:
+            self.manager.delete_chat_message(202, bob)
+        self.assertEqual(denied.exception.status_code, 403)
+
+        deleted = self.manager.delete_chat_message(202, admin)
+        self.assertEqual(deleted["id"], 202)
+        self.assertEqual(self.manager.chat_history, [])
+        stored = json.loads(Path(app_module.CHAT_FILE).read_text(encoding="utf-8"))
+        self.assertEqual(stored, [])
+
     def test_python_execution_requires_login(self):
         unauthenticated = self.client.post(
             "/api/run",

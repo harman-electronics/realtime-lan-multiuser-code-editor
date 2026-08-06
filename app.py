@@ -508,6 +508,26 @@ class ConnectionManager:
                 except Exception:
                     self.disconnect(connection_id)
 
+    async def send_to_accounts(
+        self,
+        account_ids: List[str],
+        message: Dict[str, Any],
+    ) -> None:
+        payload = json.dumps(message)
+        target_ids = {account_id for account_id in account_ids if account_id}
+        connection_ids = [
+            connection_id
+            for connection_id, user in self.user_data.items()
+            if user.get("account_id") in target_ids
+        ]
+        for connection_id in set(connection_ids):
+            websocket = self.active_connections.get(connection_id)
+            if websocket:
+                try:
+                    await websocket.send_text(payload)
+                except Exception:
+                    self.disconnect(connection_id)
+
     def can_edit_owner(self, actor: Dict[str, Any], owner_account_id: str) -> bool:
         actor_id = actor.get("account_id")
         if actor.get("role") == "admin":
@@ -668,6 +688,70 @@ class ConnectionManager:
         self.chat_history.append(message)
         self.chat_history = self.chat_history[-300:]
         save_json(CHAT_FILE, self.chat_history)
+
+    def get_chat_message(self, message_id: Any) -> Optional[Dict[str, Any]]:
+        return next(
+            (
+                message
+                for message in self.chat_history
+                if str(message.get("id")) == str(message_id)
+            ),
+            None,
+        )
+
+    def edit_chat_message(
+        self,
+        message_id: Any,
+        actor: Dict[str, Any],
+        text: str,
+    ) -> Dict[str, Any]:
+        message = self.get_chat_message(message_id)
+        if not message:
+            raise HTTPException(status_code=404, detail="Message not found.")
+        sender_account_id = message.get("sender_account_id")
+        if not sender_account_id:
+            raise HTTPException(
+                status_code=409,
+                detail="This older message cannot be edited safely.",
+            )
+        if sender_account_id != actor.get("account_id"):
+            raise HTTPException(
+                status_code=403,
+                detail="You can edit only your own messages.",
+            )
+        cleaned_text = str(text).strip()[:MAX_MESSAGE_LENGTH]
+        if not cleaned_text:
+            raise HTTPException(status_code=422, detail="A message cannot be empty.")
+        message["text"] = cleaned_text
+        message["edited"] = True
+        message["edited_at"] = datetime.now().isoformat(timespec="seconds")
+        save_json(CHAT_FILE, self.chat_history)
+        return message
+
+    def delete_chat_message(
+        self,
+        message_id: Any,
+        actor: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        message = self.get_chat_message(message_id)
+        if not message:
+            raise HTTPException(status_code=404, detail="Message not found.")
+        is_owner = (
+            bool(message.get("sender_account_id"))
+            and message.get("sender_account_id") == actor.get("account_id")
+        )
+        if not is_owner and actor.get("role") != "admin":
+            raise HTTPException(
+                status_code=403,
+                detail="You can delete only your own messages.",
+            )
+        self.chat_history = [
+            item
+            for item in self.chat_history
+            if str(item.get("id")) != str(message_id)
+        ]
+        save_json(CHAT_FILE, self.chat_history)
+        return message
 
     def get_chat_history_for_user(self, account_id: str) -> List[Dict[str, Any]]:
         return [
@@ -1475,6 +1559,59 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str) -> None:
                         client_id,
                         target_account_id,
                         {"type": "chat_message", "message": message},
+                    )
+
+            elif message_type == "chat_edit":
+                try:
+                    async with manager.state_lock:
+                        edited_message = manager.edit_chat_message(
+                            data.get("message_id"),
+                            user,
+                            str(data.get("text", "")),
+                        )
+                    payload = {
+                        "type": "chat_message_updated",
+                        "message": edited_message,
+                    }
+                    if edited_message.get("target") == "group":
+                        await manager.broadcast(payload)
+                    else:
+                        await manager.send_to_accounts(
+                            [
+                                edited_message.get("sender_account_id", ""),
+                                edited_message.get("target_account_id", ""),
+                            ],
+                            payload,
+                        )
+                except HTTPException as exc:
+                    await websocket.send_json(
+                        {"type": "error", "message": str(exc.detail)}
+                    )
+
+            elif message_type == "chat_delete":
+                try:
+                    async with manager.state_lock:
+                        deleted_message = manager.delete_chat_message(
+                            data.get("message_id"),
+                            user,
+                        )
+                    payload = {
+                        "type": "chat_message_deleted",
+                        "message_id": deleted_message.get("id"),
+                    }
+                    if deleted_message.get("target") == "group":
+                        await manager.broadcast(payload)
+                    else:
+                        await manager.send_to_accounts(
+                            [
+                                deleted_message.get("sender_account_id", ""),
+                                deleted_message.get("target_account_id", ""),
+                            ],
+                            payload,
+                        )
+                except HTTPException as exc:
+                    await websocket.send_json(
+                        {"type": "error", "message": str(exc.detail)}
                     )
 
             elif message_type == "mark_read":

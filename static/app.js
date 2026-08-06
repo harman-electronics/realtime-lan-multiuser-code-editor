@@ -69,8 +69,6 @@ const elements = {
   btnLogout: $('btnLogout'),
   presenceBar: $('presenceBar'),
   avatarGroup: $('avatarGroup'),
-  typingBanner: $('typingBanner'),
-  typingBannerText: $('typingBannerText'),
   wsStatus: $('wsStatus'),
   wsStatusText: $('wsStatusText'),
   fileTabs: $('fileTabs'),
@@ -86,6 +84,7 @@ const elements = {
   programInput: $('programInput'),
   btnClearProgramInput: $('btnClearProgramInput'),
   consoleOutput: $('consoleOutput'),
+  tabTerminalOutput: $('tabTerminalOutput'),
   execTimeTag: $('execTimeTag'),
   btnClearOutput: $('btnClearOutput'),
   btnToggleOutput: $('btnToggleOutput'),
@@ -94,6 +93,7 @@ const elements = {
   settingsButtonLabel: $('settingsButtonLabel'),
   dlgAdminSettings: $('dlgAdminSettings'),
   btnCloseAdminSettings: $('btnCloseAdminSettings'),
+  btnAdminAppearance: $('btnAdminAppearance'),
   txtAdminDisplayName: $('txtAdminDisplayName'),
   btnSaveAdminName: $('btnSaveAdminName'),
   adminNameMessage: $('adminNameMessage'),
@@ -110,7 +110,27 @@ const elements = {
   adminGlobalAccessList: $('adminGlobalAccessList'),
   dlgStudentSettings: $('dlgStudentSettings'),
   btnCloseStudentSettings: $('btnCloseStudentSettings'),
+  btnStudentAppearance: $('btnStudentAppearance'),
   studentCodeAccessList: $('studentCodeAccessList'),
+  dlgAppearance: $('dlgAppearance'),
+  btnBackAppearance: $('btnBackAppearance'),
+  btnCloseAppearance: $('btnCloseAppearance'),
+  btnCancelAppearance: $('btnCancelAppearance'),
+  btnSaveAppearance: $('btnSaveAppearance'),
+  inputWallpaper: $('inputWallpaper'),
+  btnChooseWallpaper: $('btnChooseWallpaper'),
+  btnRemoveWallpaper: $('btnRemoveWallpaper'),
+  wallpaperPreviewImage: $('wallpaperPreviewImage'),
+  wallpaperPreviewEmpty: $('wallpaperPreviewEmpty'),
+  chkAdaptiveColors: $('chkAdaptiveColors'),
+  adaptiveColorsState: $('adaptiveColorsState'),
+  rangeWallpaperDimming: $('rangeWallpaperDimming'),
+  wallpaperDimmingValue: $('wallpaperDimmingValue'),
+  rangeWallpaperVisibility: $('rangeWallpaperVisibility'),
+  wallpaperVisibilityValue: $('wallpaperVisibilityValue'),
+  rangePanelBlur: $('rangePanelBlur'),
+  panelBlurValue: $('panelBlurValue'),
+  appearanceMessage: $('appearanceMessage'),
   dlgNewFile: $('dlgNewFile'),
   btnCloseNewFile: $('btnCloseNewFile'),
   frmNewFile: $('frmNewFile'),
@@ -143,7 +163,6 @@ const elements = {
   chatMessagesContainer: $('chatMessagesContainer'),
   frmChat: $('frmChat'),
   txtChatMessage: $('txtChatMessage'),
-  btnAttachFile: $('btnAttachFile'),
 };
 
 let currentFontSize = 15;
@@ -152,7 +171,7 @@ let isChatMinimized = localStorage.getItem('chat_minimized') === 'true';
 
 document.addEventListener('DOMContentLoaded', async () => {
   lucide.createIcons();
-  initializeTheme();
+  await initializeAppearance();
   initializeEditor();
   bindInterfaceEvents();
   restoreChatLayout();
@@ -161,10 +180,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   await fetchAppInfo();
   await restoreSession();
 });
-
-function initializeTheme() {
-  setTheme(localStorage.getItem('editor_theme') || 'dark');
-}
 
 function setTheme(theme) {
   body.setAttribute('data-theme', theme);
@@ -175,6 +190,521 @@ function setTheme(theme) {
   if (state.editor) {
     state.editor.setOption('theme', dark ? 'dracula' : 'eclipse');
   }
+}
+
+const APPEARANCE_STORAGE_KEY = 'live_editor_personal_appearance_v1';
+const APPEARANCE_DB_NAME = 'live_code_editor_appearance';
+const APPEARANCE_STORE_NAME = 'wallpaper';
+const APPEARANCE_WALLPAPER_KEY = 'personal-wallpaper';
+const DEFAULT_APPEARANCE = Object.freeze({
+  themeMode: 'auto',
+  adaptColors: true,
+  dimming: 30,
+  wallpaperVisibility: 65,
+  wallpaperSizing: 'fill',
+  panelBlur: 12,
+  wallpaperMeta: null,
+});
+
+let appearanceSettings = { ...DEFAULT_APPEARANCE };
+let currentWallpaperBlob = null;
+let currentWallpaperUrl = '';
+let pendingWallpaperFile = null;
+let pendingWallpaperUrl = '';
+let pendingWallpaperMeta = null;
+let removeWallpaperPending = false;
+let appearanceReturnDialog = null;
+
+async function initializeAppearance() {
+  appearanceSettings = readAppearanceSettings();
+  try {
+    currentWallpaperBlob = await readWallpaperBlob();
+  } catch (error) {
+    console.warn('Unable to read the local wallpaper:', error);
+    currentWallpaperBlob = null;
+  }
+  applyAppearance();
+}
+
+function readAppearanceSettings() {
+  const fallback = {
+    ...DEFAULT_APPEARANCE,
+    themeMode: localStorage.getItem('editor_theme') ? 'auto' : DEFAULT_APPEARANCE.themeMode,
+  };
+  try {
+    const stored = JSON.parse(localStorage.getItem(APPEARANCE_STORAGE_KEY) || 'null');
+    if (!stored || typeof stored !== 'object') return fallback;
+    const themeMode = ['auto', 'light', 'dark'].includes(stored.themeMode)
+      ? stored.themeMode
+      : fallback.themeMode;
+    return {
+      themeMode,
+      adaptColors: stored.adaptColors !== false,
+      dimming: clampNumber(stored.dimming, 0, 75, DEFAULT_APPEARANCE.dimming),
+      wallpaperVisibility: clampNumber(
+        stored.wallpaperVisibility,
+        0,
+        100,
+        DEFAULT_APPEARANCE.wallpaperVisibility,
+      ),
+      wallpaperSizing: ['fill', 'fit'].includes(stored.wallpaperSizing)
+        ? stored.wallpaperSizing
+        : DEFAULT_APPEARANCE.wallpaperSizing,
+      panelBlur: clampNumber(stored.panelBlur, 0, 30, DEFAULT_APPEARANCE.panelBlur),
+      wallpaperMeta: stored.wallpaperMeta && typeof stored.wallpaperMeta === 'object'
+        ? stored.wallpaperMeta
+        : null,
+    };
+  } catch (error) {
+    console.warn('Unable to read appearance preferences:', error);
+    return fallback;
+  }
+}
+
+function clampNumber(value, minimum, maximum, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.min(maximum, Math.max(minimum, number)) : fallback;
+}
+
+function saveAppearanceSettings() {
+  localStorage.setItem(APPEARANCE_STORAGE_KEY, JSON.stringify(appearanceSettings));
+}
+
+function openAppearanceDatabase() {
+  return new Promise((resolve, reject) => {
+    if (!window.indexedDB) {
+      reject(new Error('This browser does not support local wallpaper storage.'));
+      return;
+    }
+    const request = indexedDB.open(APPEARANCE_DB_NAME, 1);
+    request.onupgradeneeded = () => {
+      const database = request.result;
+      if (!database.objectStoreNames.contains(APPEARANCE_STORE_NAME)) {
+        database.createObjectStore(APPEARANCE_STORE_NAME);
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error('Unable to open local wallpaper storage.'));
+  });
+}
+
+async function readWallpaperBlob() {
+  const database = await openAppearanceDatabase();
+  return new Promise((resolve, reject) => {
+    const transaction = database.transaction(APPEARANCE_STORE_NAME, 'readonly');
+    const request = transaction.objectStore(APPEARANCE_STORE_NAME).get(APPEARANCE_WALLPAPER_KEY);
+    request.onsuccess = () => resolve(request.result instanceof Blob ? request.result : null);
+    request.onerror = () => reject(request.error || new Error('Unable to read the saved wallpaper.'));
+    transaction.oncomplete = () => database.close();
+    transaction.onerror = () => database.close();
+  });
+}
+
+async function writeWallpaperBlob(blob) {
+  const database = await openAppearanceDatabase();
+  return new Promise((resolve, reject) => {
+    const transaction = database.transaction(APPEARANCE_STORE_NAME, 'readwrite');
+    transaction.objectStore(APPEARANCE_STORE_NAME).put(blob, APPEARANCE_WALLPAPER_KEY);
+    transaction.oncomplete = () => {
+      database.close();
+      resolve();
+    };
+    transaction.onerror = () => {
+      database.close();
+      reject(transaction.error || new Error('Unable to save the wallpaper on this PC.'));
+    };
+  });
+}
+
+async function deleteWallpaperBlob() {
+  const database = await openAppearanceDatabase();
+  return new Promise((resolve, reject) => {
+    const transaction = database.transaction(APPEARANCE_STORE_NAME, 'readwrite');
+    transaction.objectStore(APPEARANCE_STORE_NAME).delete(APPEARANCE_WALLPAPER_KEY);
+    transaction.oncomplete = () => {
+      database.close();
+      resolve();
+    };
+    transaction.onerror = () => {
+      database.close();
+      reject(transaction.error || new Error('Unable to remove the local wallpaper.'));
+    };
+  });
+}
+
+function resolveAppearanceTheme() {
+  if (appearanceSettings.themeMode === 'light' || appearanceSettings.themeMode === 'dark') {
+    return appearanceSettings.themeMode;
+  }
+  if (currentWallpaperBlob && Number.isFinite(Number(appearanceSettings.wallpaperMeta?.luminance))) {
+    return Number(appearanceSettings.wallpaperMeta.luminance) >= 0.42 ? 'light' : 'dark';
+  }
+  return localStorage.getItem('editor_theme') || 'dark';
+}
+
+function applyAppearance() {
+  if (currentWallpaperUrl) URL.revokeObjectURL(currentWallpaperUrl);
+  currentWallpaperUrl = currentWallpaperBlob ? URL.createObjectURL(currentWallpaperBlob) : '';
+  body.classList.toggle('has-personal-wallpaper', Boolean(currentWallpaperUrl));
+  body.classList.toggle(
+    'wallpaper-fit',
+    Boolean(currentWallpaperUrl) && appearanceSettings.wallpaperSizing === 'fit',
+  );
+  if (currentWallpaperUrl) {
+    body.style.setProperty('--personal-wallpaper-image', `url("${currentWallpaperUrl}")`);
+  } else {
+    body.style.removeProperty('--personal-wallpaper-image');
+  }
+
+  body.style.setProperty('--wallpaper-dimming', String(appearanceSettings.dimming / 100));
+  body.style.setProperty('--wallpaper-panel-blur', `${appearanceSettings.panelBlur}px`);
+  body.style.setProperty(
+    '--personal-wallpaper-size',
+    appearanceSettings.wallpaperSizing === 'fit' ? 'contain' : 'cover',
+  );
+  applyWallpaperVisibility(appearanceSettings.wallpaperVisibility);
+  applyAdaptiveAccent();
+  setTheme(resolveAppearanceTheme());
+}
+
+function applyWallpaperVisibility(value) {
+  const visibility = clampNumber(value, 0, 100, DEFAULT_APPEARANCE.wallpaperVisibility) / 100;
+  const darkPanel = 0.96 - visibility * 0.68;
+  const darkStrong = Math.min(0.98, darkPanel + 0.08);
+  const darkEditor = Math.max(0.18, 0.9 - visibility * 0.72);
+  const lightPanel = 0.98 - visibility * 0.34;
+  const lightStrong = Math.min(0.99, lightPanel + 0.07);
+  const lightEditor = Math.max(0.5, 0.98 - visibility * 0.37);
+  body.style.setProperty('--wallpaper-dark-panel-alpha', darkPanel.toFixed(3));
+  body.style.setProperty('--wallpaper-dark-strong-alpha', darkStrong.toFixed(3));
+  body.style.setProperty('--wallpaper-dark-editor-alpha', darkEditor.toFixed(3));
+  body.style.setProperty('--wallpaper-light-panel-alpha', lightPanel.toFixed(3));
+  body.style.setProperty('--wallpaper-light-strong-alpha', lightStrong.toFixed(3));
+  body.style.setProperty('--wallpaper-light-editor-alpha', lightEditor.toFixed(3));
+}
+
+function applyAdaptiveAccent() {
+  const metadata = appearanceSettings.wallpaperMeta;
+  const useAdaptiveAccent = Boolean(
+    currentWallpaperBlob
+    && appearanceSettings.adaptColors
+    && metadata?.accent
+    && metadata?.accentRgb
+  );
+  const customProperties = [
+    '--accent-color',
+    '--accent-hover',
+    '--accent-gradient',
+    '--shadow-glow',
+    '--wallpaper-accent-rgb',
+  ];
+  if (!useAdaptiveAccent) {
+    customProperties.forEach((property) => body.style.removeProperty(property));
+    return;
+  }
+
+  const accent = metadata.accent;
+  const hover = metadata.accentHover || accent;
+  const rgb = metadata.accentRgb;
+  body.style.setProperty('--accent-color', accent);
+  body.style.setProperty('--accent-hover', hover);
+  body.style.setProperty('--accent-gradient', `linear-gradient(135deg, ${hover} 0%, ${accent} 100%)`);
+  body.style.setProperty('--shadow-glow', `0 0 22px rgba(${rgb}, 0.28)`);
+  body.style.setProperty('--wallpaper-accent-rgb', rgb);
+}
+
+function openAppearance(returnDialog) {
+  appearanceReturnDialog = returnDialog?.open ? returnDialog : null;
+  appearanceReturnDialog?.close();
+  pendingWallpaperFile = null;
+  pendingWallpaperMeta = null;
+  removeWallpaperPending = false;
+  releasePendingWallpaperUrl();
+  elements.chkAdaptiveColors.checked = appearanceSettings.adaptColors;
+  elements.adaptiveColorsState.textContent = appearanceSettings.adaptColors ? 'On' : 'Off';
+  elements.rangeWallpaperDimming.value = String(appearanceSettings.dimming);
+  elements.wallpaperDimmingValue.textContent = `${appearanceSettings.dimming}%`;
+  elements.rangeWallpaperVisibility.value = String(appearanceSettings.wallpaperVisibility);
+  elements.wallpaperVisibilityValue.textContent = `${appearanceSettings.wallpaperVisibility}%`;
+  elements.rangePanelBlur.value = String(appearanceSettings.panelBlur);
+  elements.panelBlurValue.textContent = `${appearanceSettings.panelBlur}px`;
+  setAppearanceThemeSelection(appearanceSettings.themeMode);
+  setWallpaperSizingSelection(appearanceSettings.wallpaperSizing);
+  updateWallpaperPreview(currentWallpaperUrl);
+  elements.btnRemoveWallpaper.disabled = !currentWallpaperBlob;
+  setMessage(elements.appearanceMessage, '');
+  elements.dlgAppearance.showModal();
+  lucide.createIcons();
+}
+
+function closeAppearance(returnToSettings = true) {
+  releasePendingWallpaperUrl();
+  pendingWallpaperFile = null;
+  pendingWallpaperMeta = null;
+  removeWallpaperPending = false;
+  applyAppearance();
+  if (elements.dlgAppearance.open) elements.dlgAppearance.close();
+  if (returnToSettings && appearanceReturnDialog && !appearanceReturnDialog.open) {
+    appearanceReturnDialog.showModal();
+    lucide.createIcons();
+  }
+  appearanceReturnDialog = null;
+}
+
+function releasePendingWallpaperUrl() {
+  if (pendingWallpaperUrl) URL.revokeObjectURL(pendingWallpaperUrl);
+  pendingWallpaperUrl = '';
+}
+
+function updateWallpaperPreview(source) {
+  const hasSource = Boolean(source);
+  elements.wallpaperPreviewImage.style.display = hasSource ? 'block' : 'none';
+  elements.wallpaperPreviewEmpty.style.display = hasSource ? 'none' : 'flex';
+  if (hasSource) elements.wallpaperPreviewImage.src = source;
+  else elements.wallpaperPreviewImage.removeAttribute('src');
+  const selectedSizing = document.querySelector('[data-wallpaper-size].active')?.dataset.wallpaperSize
+    || appearanceSettings.wallpaperSizing;
+  elements.wallpaperPreviewImage.style.objectFit = selectedSizing === 'fit' ? 'contain' : 'cover';
+}
+
+function setAppearanceThemeSelection(themeMode) {
+  document.querySelectorAll('[data-appearance-theme]').forEach((button) => {
+    const selected = button.dataset.appearanceTheme === themeMode;
+    button.classList.toggle('active', selected);
+    button.setAttribute('aria-checked', selected ? 'true' : 'false');
+  });
+}
+
+function setWallpaperSizingSelection(wallpaperSizing) {
+  document.querySelectorAll('[data-wallpaper-size]').forEach((button) => {
+    const selected = button.dataset.wallpaperSize === wallpaperSizing;
+    button.classList.toggle('active', selected);
+    button.setAttribute('aria-checked', selected ? 'true' : 'false');
+  });
+  elements.wallpaperPreviewImage.style.objectFit = wallpaperSizing === 'fit' ? 'contain' : 'cover';
+  body.style.setProperty('--personal-wallpaper-size', wallpaperSizing === 'fit' ? 'contain' : 'cover');
+  body.classList.toggle('wallpaper-fit', Boolean(currentWallpaperUrl) && wallpaperSizing === 'fit');
+}
+
+async function chooseWallpaper(file) {
+  if (!file) return;
+  if (!file.type.startsWith('image/')) {
+    setMessage(elements.appearanceMessage, 'Choose a PNG, JPEG, WebP, or GIF image.', 'error');
+    return;
+  }
+  if (file.size > 15 * 1024 * 1024) {
+    setMessage(elements.appearanceMessage, 'Choose an image smaller than 15 MB.', 'error');
+    return;
+  }
+
+  elements.btnChooseWallpaper.disabled = true;
+  setMessage(elements.appearanceMessage, 'Reading wallpaper colours...', 'success');
+  try {
+    const metadata = await analyzeWallpaper(file);
+    pendingWallpaperFile = file;
+    pendingWallpaperMeta = {
+      ...metadata,
+      name: file.name,
+      type: file.type,
+    };
+    removeWallpaperPending = false;
+    releasePendingWallpaperUrl();
+    pendingWallpaperUrl = URL.createObjectURL(file);
+    updateWallpaperPreview(pendingWallpaperUrl);
+    elements.btnRemoveWallpaper.disabled = false;
+    setMessage(elements.appearanceMessage, 'Wallpaper ready. Save to apply it on this PC.', 'success');
+  } catch (error) {
+    setMessage(elements.appearanceMessage, error.message || 'Unable to read that image.', 'error');
+  } finally {
+    elements.btnChooseWallpaper.disabled = false;
+    elements.inputWallpaper.value = '';
+  }
+}
+
+function removeSelectedWallpaper() {
+  pendingWallpaperFile = null;
+  pendingWallpaperMeta = null;
+  removeWallpaperPending = true;
+  releasePendingWallpaperUrl();
+  updateWallpaperPreview('');
+  elements.btnRemoveWallpaper.disabled = true;
+  setMessage(elements.appearanceMessage, 'Wallpaper will be removed when you save.', 'success');
+}
+
+async function saveAppearance() {
+  const selectedTheme = document.querySelector('[data-appearance-theme].active')?.dataset.appearanceTheme || 'auto';
+  const selectedWallpaperSizing = document.querySelector('[data-wallpaper-size].active')?.dataset.wallpaperSize
+    || DEFAULT_APPEARANCE.wallpaperSizing;
+  const nextSettings = {
+    themeMode: selectedTheme,
+    adaptColors: elements.chkAdaptiveColors.checked,
+    dimming: clampNumber(elements.rangeWallpaperDimming.value, 0, 75, DEFAULT_APPEARANCE.dimming),
+    wallpaperVisibility: clampNumber(
+      elements.rangeWallpaperVisibility.value,
+      0,
+      100,
+      DEFAULT_APPEARANCE.wallpaperVisibility,
+    ),
+    wallpaperSizing: selectedWallpaperSizing,
+    panelBlur: clampNumber(elements.rangePanelBlur.value, 0, 30, DEFAULT_APPEARANCE.panelBlur),
+    wallpaperMeta: appearanceSettings.wallpaperMeta,
+  };
+
+  elements.btnSaveAppearance.disabled = true;
+  setMessage(elements.appearanceMessage, 'Saving appearance on this PC...', 'success');
+  try {
+    if (removeWallpaperPending) {
+      await deleteWallpaperBlob();
+      currentWallpaperBlob = null;
+      nextSettings.wallpaperMeta = null;
+    } else if (pendingWallpaperFile) {
+      await writeWallpaperBlob(pendingWallpaperFile);
+      currentWallpaperBlob = pendingWallpaperFile;
+      nextSettings.wallpaperMeta = pendingWallpaperMeta;
+    }
+    appearanceSettings = nextSettings;
+    saveAppearanceSettings();
+    applyAppearance();
+    showToast('Personal appearance saved on this PC.', 'success');
+    closeAppearance(true);
+  } catch (error) {
+    setMessage(elements.appearanceMessage, error.message || 'Unable to save the appearance.', 'error');
+  } finally {
+    elements.btnSaveAppearance.disabled = false;
+  }
+}
+
+async function analyzeWallpaper(file) {
+  let bitmap;
+  try {
+    bitmap = await createImageBitmap(file);
+  } catch (error) {
+    throw new Error('This image could not be opened. Try a PNG or JPEG file.');
+  }
+
+  const width = 96;
+  const height = Math.max(54, Math.round(width * (bitmap.height / bitmap.width)));
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = Math.min(height, 96);
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close?.();
+  const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+  const hueBins = Array.from({ length: 24 }, () => ({ weight: 0, r: 0, g: 0, b: 0 }));
+  let luminanceTotal = 0;
+  let luminanceWeight = 0;
+  let averageR = 0;
+  let averageG = 0;
+  let averageB = 0;
+  let averageWeight = 0;
+
+  for (let index = 0; index < pixels.length; index += 4) {
+    const alpha = pixels[index + 3] / 255;
+    if (alpha < 0.1) continue;
+    const r = pixels[index];
+    const g = pixels[index + 1];
+    const b = pixels[index + 2];
+    const luminance = relativeLuminance(r, g, b);
+    luminanceTotal += luminance * alpha;
+    luminanceWeight += alpha;
+    averageR += r * alpha;
+    averageG += g * alpha;
+    averageB += b * alpha;
+    averageWeight += alpha;
+
+    const hsl = rgbToHsl(r, g, b);
+    if (hsl.s < 0.18 || hsl.l < 0.08 || hsl.l > 0.92) continue;
+    const weight = alpha * hsl.s * (0.35 + Math.min(hsl.l, 0.7));
+    const binIndex = Math.min(23, Math.floor(hsl.h * 24));
+    const bin = hueBins[binIndex];
+    bin.weight += weight;
+    bin.r += r * weight;
+    bin.g += g * weight;
+    bin.b += b * weight;
+  }
+
+  const strongest = hueBins.reduce((best, bin) => (bin.weight > best.weight ? bin : best), hueBins[0]);
+  let sourceR;
+  let sourceG;
+  let sourceB;
+  if (strongest.weight > 0) {
+    sourceR = strongest.r / strongest.weight;
+    sourceG = strongest.g / strongest.weight;
+    sourceB = strongest.b / strongest.weight;
+  } else {
+    const safeWeight = averageWeight || 1;
+    sourceR = averageR / safeWeight;
+    sourceG = averageG / safeWeight;
+    sourceB = averageB / safeWeight;
+  }
+
+  const dominantHsl = rgbToHsl(sourceR, sourceG, sourceB);
+  const accentRgb = hslToRgb(dominantHsl.h, Math.max(0.66, dominantHsl.s), 0.52);
+  const hoverRgb = hslToRgb(dominantHsl.h, Math.max(0.68, dominantHsl.s), 0.43);
+  return {
+    luminance: Number((luminanceTotal / (luminanceWeight || 1)).toFixed(4)),
+    accent: rgbToHex(accentRgb.r, accentRgb.g, accentRgb.b),
+    accentHover: rgbToHex(hoverRgb.r, hoverRgb.g, hoverRgb.b),
+    accentRgb: `${accentRgb.r}, ${accentRgb.g}, ${accentRgb.b}`,
+  };
+}
+
+function relativeLuminance(r, g, b) {
+  const channels = [r, g, b].map((channel) => {
+    const normalized = channel / 255;
+    return normalized <= 0.04045
+      ? normalized / 12.92
+      : ((normalized + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+}
+
+function rgbToHsl(red, green, blue) {
+  const r = red / 255;
+  const g = green / 255;
+  const b = blue / 255;
+  const maximum = Math.max(r, g, b);
+  const minimum = Math.min(r, g, b);
+  const delta = maximum - minimum;
+  let hue = 0;
+  if (delta) {
+    if (maximum === r) hue = ((g - b) / delta) % 6;
+    else if (maximum === g) hue = (b - r) / delta + 2;
+    else hue = (r - g) / delta + 4;
+    hue /= 6;
+    if (hue < 0) hue += 1;
+  }
+  const lightness = (maximum + minimum) / 2;
+  const saturation = delta ? delta / (1 - Math.abs(2 * lightness - 1)) : 0;
+  return { h: hue, s: saturation, l: lightness };
+}
+
+function hslToRgb(hue, saturation, lightness) {
+  const chroma = (1 - Math.abs(2 * lightness - 1)) * saturation;
+  const section = hue * 6;
+  const second = chroma * (1 - Math.abs((section % 2) - 1));
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  if (section < 1) [r, g] = [chroma, second];
+  else if (section < 2) [r, g] = [second, chroma];
+  else if (section < 3) [g, b] = [chroma, second];
+  else if (section < 4) [g, b] = [second, chroma];
+  else if (section < 5) [r, b] = [second, chroma];
+  else [r, b] = [chroma, second];
+  const match = lightness - chroma / 2;
+  return {
+    r: Math.round((r + match) * 255),
+    g: Math.round((g + match) * 255),
+    b: Math.round((b + match) * 255),
+  };
+}
+
+function rgbToHex(r, g, b) {
+  return `#${[r, g, b]
+    .map((value) => Math.round(value).toString(16).padStart(2, '0'))
+    .join('')}`;
 }
 
 function setFontSize(size) {
@@ -428,6 +958,16 @@ function renderColorGrid() {
   });
 }
 
+function completeAuthentication(data, message) {
+  state.authToken = data.token;
+  state.user = data.user;
+  localStorage.setItem('live_editor_auth_token', state.authToken);
+  localStorage.setItem('live_editor_color', state.color);
+  updateSignedInUI();
+  setMessage(elements.loginMessage, message, 'success');
+  tryJoinSocket();
+}
+
 async function submitLogin(role, credentials) {
   if (!state.color) {
     setMessage(elements.loginMessage, 'Choose a cursor color.', 'error');
@@ -442,13 +982,7 @@ async function submitLogin(role, credentials) {
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.detail || 'Unable to log in.');
-    state.authToken = data.token;
-    state.user = data.user;
-    localStorage.setItem('live_editor_auth_token', state.authToken);
-    localStorage.setItem('live_editor_color', state.color);
-    updateSignedInUI();
-    setMessage(elements.loginMessage, 'Login successful. Joining the live editor...', 'success');
-    tryJoinSocket();
+    completeAuthentication(data, 'Login successful. Joining the live editor...');
   } catch (error) {
     setMessage(elements.loginMessage, error.message, 'error');
   }
@@ -642,6 +1176,14 @@ function handleWsMessage(data) {
       receiveChatMessage(data.message);
       break;
 
+    case 'chat_message_updated':
+      applyChatMessageUpdate(data.message);
+      break;
+
+    case 'chat_message_deleted':
+      applyChatMessageDelete(data.message_id);
+      break;
+
     case 'account_name_updated':
       applyAccountNameUpdate(data);
       break;
@@ -696,13 +1238,18 @@ function renderFileTabs() {
     tab.setAttribute('role', 'tab');
     tab.setAttribute('aria-selected', file.id === state.activeFileId ? 'true' : 'false');
 
-    const languageDot = document.createElement('span');
-    languageDot.className = `file-language-dot ${file.language}`;
-    languageDot.textContent = file.language === 'cpp' ? 'C++' : 'Py';
+    const languageLogo = document.createElement('img');
+    languageLogo.className = `file-language-logo ${file.language}`;
+    languageLogo.src = file.language === 'cpp'
+      ? '/static/icons/cplusplus-original.svg'
+      : '/static/icons/python-original.svg';
+    languageLogo.alt = '';
+    languageLogo.setAttribute('aria-hidden', 'true');
+    languageLogo.draggable = false;
     const name = document.createElement('span');
     name.className = 'file-tab-name';
     name.textContent = file.name;
-    tab.append(languageDot, name);
+    tab.append(languageLogo, name);
     tab.addEventListener('click', () => switchFile(file.id));
 
     if (state.user?.role === 'admin' && state.files.length > 1) {
@@ -837,6 +1384,7 @@ function renderRemoteCursor(data) {
   const cursor = document.createElement('span');
   cursor.className = 'remote-cursor';
   cursor.style.borderColor = safeColor(data.color);
+
   cursor.classList.toggle('is-typing', state.typingUsers.has(data.id));
 
   const marker = state.editor.setBookmark(data.cursor, {
@@ -867,17 +1415,6 @@ function updateTypingState(data) {
   else state.typingUsers.delete(data.id);
   const remote = state.remoteCursors.get(data.id);
   remote?.element.classList.toggle('is-typing', Boolean(data.is_typing));
-
-  const typingNames = state.activeUsers
-    .filter((user) => state.typingUsers.has(user.id))
-    .map((user) => `${user.username}${user.role === 'admin' ? ' ♛' : ''}`);
-  if (data.is_typing && !typingNames.includes(data.username)) {
-    typingNames.push(`${data.username}${data.role === 'admin' ? ' ♛' : ''}`);
-  }
-  elements.typingBanner.style.display = typingNames.length ? 'flex' : 'none';
-  elements.typingBannerText.textContent = typingNames.length
-    ? `${typingNames.join(', ')} ${typingNames.length === 1 ? 'is' : 'are'} editing...`
-    : '';
 }
 
 function updateRemoteLineHighlight(data) {
@@ -916,10 +1453,14 @@ function renderPresence() {
   active.forEach((user) => {
     const pill = document.createElement('div');
     pill.className = 'user-pill';
-    pill.style.backgroundColor = safeColor(user.color);
+    const avatar = document.createElement('span');
+    avatar.className = 'presence-avatar';
+    avatar.style.backgroundColor = safeColor(user.color);
+    avatar.textContent = user.username.charAt(0).toUpperCase();
     const name = document.createElement('span');
+    name.className = 'presence-name';
     name.textContent = `${user.username}${user.role === 'admin' ? ' ♛' : ''}`;
-    pill.appendChild(name);
+    pill.append(avatar, name);
     if (user.is_typing) {
       const typing = document.createElement('span');
       typing.className = 'typing-indicator';
@@ -1302,6 +1843,23 @@ function receiveChatMessage(message) {
   }
 }
 
+function applyChatMessageUpdate(message) {
+  if (!message) return;
+  const index = state.chatHistory.findIndex((item) => String(item.id) === String(message.id));
+  if (index === -1) state.chatHistory.push(message);
+  else state.chatHistory[index] = message;
+  renderChatMessages();
+  renderDmConversations();
+}
+
+function applyChatMessageDelete(messageId) {
+  state.chatHistory = state.chatHistory.filter(
+    (message) => String(message.id) !== String(messageId),
+  );
+  renderChatMessages();
+  renderDmConversations();
+}
+
 function renderChatMessages() {
   elements.chatMessagesContainer.replaceChildren();
   const filtered = state.chatHistory.filter((message) => {
@@ -1335,8 +1893,17 @@ function renderChatMessages() {
   filtered.forEach((message) => {
     const own = message.sender_account_id === state.user?.account_id
       || (!message.sender_account_id && message.sender === state.user?.username);
+    const canEdit = Boolean(own && message.sender_account_id && message.id);
+    const canDelete = Boolean(
+      message.id
+      && (
+        (own && message.sender_account_id)
+        || state.user?.role === 'admin'
+      )
+    );
     const card = document.createElement('div');
     card.className = `chat-msg-card ${own ? 'own' : 'other'}${message.target !== 'group' ? ' private' : ''}`;
+    card.dataset.messageId = String(message.id || '');
     const header = document.createElement('div');
     header.className = 'chat-msg-header';
     const sender = document.createElement('span');
@@ -1349,13 +1916,132 @@ function renderChatMessages() {
     timestamp.className = 'chat-timestamp';
     timestamp.textContent = message.timestamp || '';
     header.append(sender, timestamp);
+    if (message.edited) {
+      const edited = document.createElement('span');
+      edited.className = 'chat-edited-label';
+      edited.textContent = 'edited';
+      header.appendChild(edited);
+    }
+
+    const messageBody = document.createElement('div');
+    messageBody.className = 'chat-msg-body';
     const bubble = document.createElement('div');
     bubble.className = 'chat-msg-bubble';
     bubble.textContent = message.text || '';
-    card.append(header, bubble);
+    messageBody.appendChild(bubble);
+
+    if (canEdit || canDelete) {
+      const actionArea = document.createElement('div');
+      actionArea.className = 'chat-msg-action-area';
+      const menuButton = document.createElement('button');
+      menuButton.type = 'button';
+      menuButton.className = 'chat-msg-menu-button';
+      menuButton.setAttribute('aria-label', 'Message actions');
+      menuButton.setAttribute('aria-expanded', 'false');
+      menuButton.innerHTML = '<i data-lucide="more-vertical"></i>';
+      const menu = document.createElement('div');
+      menu.className = 'chat-msg-menu';
+      menu.id = `chat-message-menu-${message.id}`;
+      menuButton.setAttribute('aria-controls', menu.id);
+
+      if (canEdit) {
+        const editButton = document.createElement('button');
+        editButton.type = 'button';
+        editButton.className = 'chat-msg-menu-item';
+        editButton.innerHTML = '<i data-lucide="pencil"></i><span>Edit</span>';
+        editButton.addEventListener('click', () => beginInlineMessageEdit(message, card));
+        menu.appendChild(editButton);
+      }
+
+      if (canDelete) {
+        const deleteButton = document.createElement('button');
+        deleteButton.type = 'button';
+        deleteButton.className = 'chat-msg-menu-item danger';
+        deleteButton.innerHTML = '<i data-lucide="trash-2"></i><span>Delete</span>';
+        deleteButton.addEventListener('click', () => {
+          if (!confirm('Delete this message for everyone?')) return;
+          sendWsMessage({ type: 'chat_delete', message_id: message.id });
+          closeChatActionMenus();
+        });
+        menu.appendChild(deleteButton);
+      }
+
+      menuButton.addEventListener('click', (event) => {
+        event.stopPropagation();
+        const opening = !menu.classList.contains('open');
+        closeChatActionMenus(menu);
+        menu.classList.toggle('open', opening);
+        menuButton.setAttribute('aria-expanded', String(opening));
+      });
+      menu.addEventListener('click', (event) => event.stopPropagation());
+      actionArea.append(menuButton, menu);
+      if (own) messageBody.prepend(actionArea);
+      else messageBody.appendChild(actionArea);
+    }
+
+    card.append(header, messageBody);
     elements.chatMessagesContainer.appendChild(card);
   });
+  lucide.createIcons();
   elements.chatMessagesContainer.scrollTop = elements.chatMessagesContainer.scrollHeight;
+}
+
+function closeChatActionMenus(exceptMenu = null) {
+  document.querySelectorAll('.chat-msg-menu.open').forEach((menu) => {
+    if (menu !== exceptMenu) {
+      menu.classList.remove('open');
+      const button = document.querySelector(`[aria-controls="${menu.id}"]`);
+      button?.setAttribute('aria-expanded', 'false');
+    }
+  });
+}
+
+function beginInlineMessageEdit(message, card) {
+  closeChatActionMenus();
+  const bubble = card.querySelector('.chat-msg-bubble');
+  if (!bubble) return;
+  const editor = document.createElement('textarea');
+  editor.className = 'chat-message-edit-input';
+  editor.value = message.text || '';
+  editor.rows = Math.min(6, Math.max(2, editor.value.split('\n').length));
+  const actions = document.createElement('div');
+  actions.className = 'chat-message-edit-actions';
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'chat-edit-cancel';
+  cancel.textContent = 'Cancel';
+  const save = document.createElement('button');
+  save.type = 'button';
+  save.className = 'chat-edit-save';
+  save.textContent = 'Save';
+  actions.append(cancel, save);
+  bubble.replaceChildren(editor, actions);
+  editor.focus();
+  editor.setSelectionRange(editor.value.length, editor.value.length);
+
+  const submitEdit = () => {
+    const text = editor.value.trim();
+    if (!text) {
+      showToast('A message cannot be empty.', 'error');
+      return;
+    }
+    if (text === message.text) {
+      renderChatMessages();
+      return;
+    }
+    sendWsMessage({ type: 'chat_edit', message_id: message.id, text });
+  };
+  save.addEventListener('click', submitEdit);
+  cancel.addEventListener('click', renderChatMessages);
+  editor.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      renderChatMessages();
+    } else if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      submitEdit();
+    }
+  });
 }
 
 function renderDmConversations() {
@@ -1398,7 +2084,7 @@ function renderDmConversations() {
 
   sorted.forEach((conversation) => {
     const person = directory.get(conversation.accountId) || {
-      username: 'Former student',
+      username: 'Former Student',
       role: 'student',
       online: false,
       color: '#64748B',
@@ -1481,7 +2167,7 @@ function syncChatView() {
   }
 
   const person = participantDirectory().get(state.activeDmAccountId) || {
-    username: 'Former student',
+    username: 'Former Student',
     role: 'student',
     online: false,
     color: '#64748B',
@@ -1561,7 +2247,9 @@ function expandChat() {
 
 function bindInterfaceEvents() {
   elements.btnThemeToggle.addEventListener('click', () => {
-    setTheme(body.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+    appearanceSettings.themeMode = body.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+    saveAppearanceSettings();
+    setTheme(appearanceSettings.themeMode);
   });
   elements.btnFontInc.addEventListener('click', () => setFontSize(currentFontSize + 1));
   elements.btnFontDec.addEventListener('click', () => setFontSize(currentFontSize - 1));
@@ -1632,6 +2320,40 @@ function bindInterfaceEvents() {
   elements.btnSettings.addEventListener('click', openSettings);
   elements.btnCloseAdminSettings.addEventListener('click', () => elements.dlgAdminSettings.close());
   elements.btnCloseStudentSettings.addEventListener('click', () => elements.dlgStudentSettings.close());
+  elements.btnAdminAppearance.addEventListener('click', () => openAppearance(elements.dlgAdminSettings));
+  elements.btnStudentAppearance.addEventListener('click', () => openAppearance(elements.dlgStudentSettings));
+  elements.btnChooseWallpaper.addEventListener('click', () => elements.inputWallpaper.click());
+  elements.inputWallpaper.addEventListener('change', () => chooseWallpaper(elements.inputWallpaper.files?.[0]));
+  elements.btnRemoveWallpaper.addEventListener('click', removeSelectedWallpaper);
+  elements.chkAdaptiveColors.addEventListener('change', () => {
+    elements.adaptiveColorsState.textContent = elements.chkAdaptiveColors.checked ? 'On' : 'Off';
+  });
+  document.querySelectorAll('[data-appearance-theme]').forEach((button) => {
+    button.addEventListener('click', () => setAppearanceThemeSelection(button.dataset.appearanceTheme));
+  });
+  document.querySelectorAll('[data-wallpaper-size]').forEach((button) => {
+    button.addEventListener('click', () => setWallpaperSizingSelection(button.dataset.wallpaperSize));
+  });
+  elements.rangeWallpaperDimming.addEventListener('input', () => {
+    elements.wallpaperDimmingValue.textContent = `${elements.rangeWallpaperDimming.value}%`;
+    body.style.setProperty('--wallpaper-dimming', String(Number(elements.rangeWallpaperDimming.value) / 100));
+  });
+  elements.rangeWallpaperVisibility.addEventListener('input', () => {
+    elements.wallpaperVisibilityValue.textContent = `${elements.rangeWallpaperVisibility.value}%`;
+    applyWallpaperVisibility(elements.rangeWallpaperVisibility.value);
+  });
+  elements.rangePanelBlur.addEventListener('input', () => {
+    elements.panelBlurValue.textContent = `${elements.rangePanelBlur.value}px`;
+    body.style.setProperty('--wallpaper-panel-blur', `${elements.rangePanelBlur.value}px`);
+  });
+  elements.btnCloseAppearance.addEventListener('click', () => closeAppearance(true));
+  elements.btnBackAppearance.addEventListener('click', () => closeAppearance(true));
+  elements.btnCancelAppearance.addEventListener('click', () => closeAppearance(true));
+  elements.btnSaveAppearance.addEventListener('click', saveAppearance);
+  elements.dlgAppearance.addEventListener('cancel', (event) => {
+    event.preventDefault();
+    closeAppearance(true);
+  });
   elements.btnSaveAdminName.addEventListener('click', async () => {
     const displayName = elements.txtAdminDisplayName.value.trim();
     if (!displayName) {
@@ -1809,17 +2531,8 @@ function bindInterfaceEvents() {
       elements.frmChat.requestSubmit();
     }
   });
-  elements.btnAttachFile.addEventListener('click', () => {
-    const fileInput = document.createElement('input');
-    fileInput.type = 'file';
-    fileInput.addEventListener('change', () => {
-      const file = fileInput.files?.[0];
-      if (file) elements.txtChatMessage.value += ` [Attachment: ${file.name}]`;
-    });
-    fileInput.click();
-  });
-
   initializeChatResize();
+  document.addEventListener('click', () => closeChatActionMenus());
   window.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && !isChatCollapsed && !document.querySelector('dialog[open]')) {
       isChatCollapsed = true;

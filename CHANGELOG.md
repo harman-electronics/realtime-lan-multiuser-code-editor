@@ -3,6 +3,85 @@
 All notable changes to the Real-Time LAN Multiuser Code Editor will be recorded
 in this file.
 
+## Version 3.0 — Major Interface and Appearance Update
+
+Version 3.0 combines the approved appearance, workspace-navigation, wallpaper,
+and messaging improvements into one major interface release. The registered
+Admin/Student workflow and collaboration rules from Version 2.0 remain intact.
+
+### Major interface redesign
+
+- Reworked the application into an edge-to-edge, full-screen workspace so the
+  available browser area is used without the previous outer margin.
+- Added adjustable workspace, terminal, chat, and Admin Settings panels so each
+  participant can choose a practical layout for their screen.
+- Redesigned the light and dark interfaces with clearer contrast, translucent
+  surfaces, improved spacing, and consistent responsive behaviour.
+- Consolidated workspace navigation and language-aware file tabs into a cleaner
+  visual system without changing their existing collaboration behaviour.
+- Kept Python and C++ syntax colours close to the familiar VS Code palette.
+
+### Personal appearance
+
+- Added a per-PC wallpaper system. The selected image and appearance preferences
+  are stored only in that browser and are not shared with other participants.
+- Added Fill and Fit wallpaper layouts, wallpaper preview, background dimming,
+  wallpaper visibility, panel blur, and light, dark, or automatic theme choices.
+- Added optional adaptive interface colours derived from the selected wallpaper.
+- Added a focused Appearance screen with back navigation instead of permanently
+  displaying the full Settings sidebar.
+- Added a blurred ambient background for fitted wallpapers so uncovered space
+  follows the wallpaper colours instead of becoming a plain white area.
+
+### Messaging and workspace cleanup
+
+- Added Telegram-style edit and delete actions for chat messages.
+- Limited message editing to the original sender and message deletion to the
+  original sender or Admin, with changes persisted and synchronized in real time.
+- Fixed message deletion so it updates both participants in a direct conversation
+  and every connected participant in Group Chat.
+- Removed the unused Problems tab and controls that had no working action.
+- Simplified the workspace controls while preserving Group Chat, Direct Messages,
+  unread notifications, snapshots, collaboration, and code execution.
+
+### Retained fixes and verification
+
+- Retained the per-file Program Input box and the corrected Python `input()` and
+  C++ `std::cin` execution path, including the 20,000-character input limit.
+- Clarified that separate Python `input()` calls require one value per line,
+  while C++ `std::cin` accepts values separated by spaces or new lines.
+- Updated local CSS and JavaScript cache identifiers for Version 3.0; users
+  upgrading from an older release should restart the server and press `Ctrl+F5`.
+- Expanded the permanent suite to 12 tests, including chat edit/delete ownership
+  and persistence; all 12 tests pass using isolated temporary data.
+- Re-ran the separate 12-case Python/C++ execution matrix covering loops,
+  functions, recursion, classes, standard and installed imports, multiple input,
+  Unicode, expected errors, timeouts, and C++ STL compilation; all 12 cases pass.
+- Re-verified a real C++17 compile/run using g++ and a disposable third-party
+  Python package installation/import through the authenticated runner.
+- Removed the disposable test environment and checked the release data for
+  private chats, uploads, student records, paths, tokens, and network addresses.
+
+### Security and privacy
+
+- Use Version 3.0 only on a trusted host computer and trusted LAN; do not expose
+  the development server to the public internet.
+- Student records, code, messages, snapshots, authorship, and permissions are
+  stored locally as readable JSON and must be removed before publishing a
+  working classroom copy.
+- The application does not provide HTTPS, university SSO, individual password
+  hashing, encrypted storage, or a complete execution sandbox.
+- Python and C++ programs execute on the host computer, so every participant
+  with execution access must be trusted.
+- Wallpaper images and appearance preferences remain in the participant's local
+  browser and are not synchronized through the server.
+
+### Purpose
+
+Version 3.0 makes the same real-time LAN collaboration system more adaptable and
+comfortable for prolonged use while preserving the controlled accounts, code
+ownership, permissions, messaging, and execution behaviour introduced earlier.
+
 ## Version 2.0 — Registered Accounts, Multi-File Workspace and Messaging
 
 Historical source: saved pre-appearance milestone from 27 July 2026

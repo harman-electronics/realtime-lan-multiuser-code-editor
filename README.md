@@ -1,124 +1,145 @@
 # Real-Time LAN Multiuser Code Editor
 
 A real-time LAN code editor for Python and C++ with registered accounts,
-multi-file collaboration, line ownership, access controls, live presence,
-group chat, direct messages, snapshots, and server-side code execution.
+collaborative editing, line ownership, access controls, messaging, personalized
+appearance, snapshots, and server-side code execution.
 
-![Version 2.0 interface](docs/images/version-2.0-accounts-workspace-messaging.png)
+## Version 3.0 — Major Interface and Appearance Update
 
-## Version
+Version 3.0 introduces a full-screen adjustable workspace, redesigned light and
+dark themes, per-PC wallpapers, Fill/Fit layouts, adaptive colours, a blurred
+ambient background, and improved message management.
 
-This repository represents **Version 2.0 — Registered Accounts, Multi-File
-Workspace and Messaging**.
-
-Version 2.0 is a major Rapid Application Development milestone adding
-registered identities, multi-file Python/C++ collaboration, granular code
-permissions, program input, and improved messaging.
-
-For a detailed explanation of additions, replacements, fixes, security notes,
-and earlier milestones, read the [changelog](CHANGELOG.md).
+For the complete release history, detailed changes, security guidance, privacy
+information, and known limitations, read the [changelog](CHANGELOG.md).
 
 > [!WARNING]
-> **Use Version 2.0 only on a trusted host computer and trusted local network.**
+> **Use Version 3.0 only on a trusted host computer and trusted local network.**
 > It is intended for a small class, lab, or study group working together with
-> or without their lecturer. A group working without a lecturer must designate
-> one trusted member as the Admin. Do not deploy this version to the public
-> internet. Student names, Student IDs, dates of birth, code, chats, snapshots,
-> ownership records, and permissions are stored locally as readable JSON files
-> in the host's `data` folder. The application has no cloud synchronization and
-> does not intentionally upload these records online, but they can be exposed
-> if the server is made public or if a populated `data` folder is uploaded to
-> GitHub, cloud storage, or another service. Never publish real class data.
+> or without a lecturer. Do not expose it to the public internet or publish a
+> populated `data` folder. Names, Student IDs, dates of birth, code, chats,
+> snapshots, ownership records, and permissions are stored locally as readable
+> JSON on the host computer. Never publish real class data.
 
-## University-friendly controlled access
-
-Before a student can sign in, their identity must be pre-registered by the
-lecturer acting as Admin. The record contains the student's full name, Student
-ID, date of birth, and optional class information. A student can enter the
-workspace only when their login details match an active record.
-
-This controlled-enrolment workflow prevents anonymous self-registration and
-associates collaborative activity with a known class member. It can also be
-used by a small independent study group when one trusted member manages the
-records through the Admin account.
+Registered students must be added by the lecturer acting as Admin, or by a
+trusted Admin in an independent study group. Students can enter only when their
+Student ID, date of birth, and password match an active record.
 
 > [!IMPORTANT]
 > This is a university-friendly prototype, not official university identity
 > authentication. It is not connected to institutional SSO, Active Directory,
-> or a protected student database. The shared testing password and readable
-> JSON records must be replaced with individual password hashing, encrypted
-> storage, HTTPS, a database, and institutional authentication before any
-> production or campus-wide deployment.
+> or a protected student database. Individual password hashing, encrypted
+> storage, HTTPS, a database, stronger execution isolation, and institutional
+> authentication are required before production or campus-wide use.
+
+### Default light theme
+
+![Version 3.0 default light theme](docs/images/version-3.0-default-light.png)
+
+### Default dark theme
+
+![Version 3.0 default dark theme](docs/images/version-3.0-default-dark.png)
+
+### Dark theme with a fitted wallpaper
+
+![Version 3.0 dark theme with fitted wallpaper](docs/images/version-3.0-wallpaper-dark-fit.png)
+
+The wallpaper example uses **Fit**, **5% background dimming**, **98% wallpaper
+visibility**, and **2px panel blur**. Wallpaper images and appearance settings
+are saved only in the current browser on that PC and are not synchronized.
 
 ## Main features
 
-- Controlled student records managed by a trusted Admin
+- Admin-managed student records and one active session per student
 - Real-time multi-file Python and C++ collaboration over a LAN
 - Persistent line ownership, blank-line claiming, and code-access permissions
 - Python and C++ execution with per-file Program Input (`stdin`)
 - Live presence, collaborative cursors, and restorable code snapshots
-- Group chat and improved direct messaging with unread alerts
-- LAN/QR sharing, light and dark themes, and adjustable editor text
+- Group Chat and Direct Messages with editing, deletion, and unread alerts
+- Adjustable workspace, terminal, chat, and Admin Settings panels
+- Light, dark, and automatic themes with locally saved wallpapers
+- Fill/Fit wallpaper layouts, adaptive colours, and ambient backgrounds
+- LAN address and QR-code sharing for trusted devices
 
-See the [changelog](CHANGELOG.md) for the complete Version 2.0 feature list and
-detailed changes from earlier versions.
+## Quick start
 
-## C++ compiler requirements
+### 1. Create an environment
 
-C++ files can be edited on any connected device, but compilation happens on the
-host computer running `python app.py`. Students do not need to install a
-compiler on their own devices.
-
-Version 2.0 automatically searches the host for:
-
-1. `g++`
-2. `clang++`
-3. A compatible compiler path supplied through `LIVE_EDITOR_CPP_COMPILER`
-
-Version 2.0 was tested successfully on the project computer using **g++**. It
-compiled and ran a C++17 program through the authenticated application API.
-
-Check whether a supported compiler is available from Windows Command Prompt:
+Windows Command Prompt:
 
 ```cmd
-g++ --version
+python -m venv .venv
+.venv\Scripts\activate.bat
 ```
 
-or:
+macOS or Linux:
 
-```cmd
-clang++ --version
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
 ```
 
-If neither command works, install either g++ or clang++ on the host computer,
-add it to `PATH`, close and reopen Command Prompt, and start the server again.
-You can also provide an explicit executable path for the current CMD session:
+### 2. Install dependencies
 
 ```cmd
-set "LIVE_EDITOR_CPP_COMPILER=C:\path\to\g++.exe"
+python -m pip install -r requirements.txt
+```
+
+### 3. Start the server
+
+```cmd
 python app.py
 ```
 
-An arbitrary compiler is not guaranteed to work. The current compile command
-uses GCC/Clang-style options such as `-std=c++17`, `-O0`, and `-o`. Microsoft
-Visual C++ `cl.exe` uses different options and is not supported without a code
-change.
+Open `http://localhost:8000` on the host computer. Other trusted devices on the
+same LAN can use the Wi-Fi address shown in CMD or scan the displayed QR code.
 
-## Program input (`stdin`)
+## Demonstration accounts
 
-Programs that use Python `input()` or C++ `std::cin` need values before they
-run. Enter those values in the **Program Input (stdin)** box above the output
-console, then select **Run Python** or **Compile & Run C++**.
+Use only these fictional demonstration records.
 
-![C++ Program Input producing correct results](docs/images/version-2.0-program-input.png)
+| Role/User | Student ID | Date of birth | Password |
+|---|---|---|---|
+| Admin | — | — | `12345` |
+| John Smith | `ST001` | `15/06/2005` (`2005-06-15` in the login field) | `test1` |
+| Bob | `ST002` | `01/01/2005` (`2005-01-01` in the login field) | `test1` |
 
-For example, this C++ statement:
+These passwords are temporary. Change them before using the project with a
+private group.
 
-```cpp
-std::cin >> num1 >> num2;
+### Change the testing passwords
+
+Set different passwords in the same CMD window before starting the server:
+
+```cmd
+set "LIVE_EDITOR_ADMIN_PASSWORD=choose-a-new-admin-password"
+set "LIVE_EDITOR_STUDENT_PASSWORD=choose-a-new-shared-student-password"
+python app.py
 ```
 
-can use either of these input formats:
+The Student password remains shared by all registered students in Version 3.0.
+
+## Program Input (`stdin`)
+
+Enter input in the **Program Input (stdin)** box before running a file. Input is
+limited to 20,000 characters and saved separately for each file in the current
+browser. It is not synchronized with other participants.
+
+### Python input
+
+For separate Python `input()` calls, only the one-value-per-line format works:
+
+```text
+10
+5
+```
+
+Entering `10 5` on one line gives the first `input()` call the complete text
+`10 5`, so converting it directly with `int()` fails.
+
+### C++ input
+
+C++ `std::cin` accepts either:
 
 ```text
 10 5
@@ -131,20 +152,51 @@ or:
 5
 ```
 
-The input is limited to 20,000 characters and is saved in the current browser
-for each file. It is not synchronized with other participants and is not saved
-in the host's classroom data files. This allows each participant to test the
-same shared code with different input values.
+## C++ compiler
 
-## Installing Python libraries
+C++ compilation happens on the host computer. Connected participants do not
+need their own compiler.
 
-Python standard-library modules such as `math`, `json`, `statistics`, and
-`collections` work without an additional installation. A third-party package
-must be installed on the host computer into the same Python environment used
-to start the server. Connected participants do not install it on their own
-devices.
+Version 3.0 searches for `g++`, then `clang++`, then a compatible executable
+provided through `LIVE_EDITOR_CPP_COMPILER`. Check the host from CMD:
 
-From the activated project environment in Windows Command Prompt:
+```cmd
+g++ --version
+clang++ --version
+```
+
+To provide a compiler path manually:
+
+```cmd
+set "LIVE_EDITOR_CPP_COMPILER=C:\path\to\g++.exe"
+python app.py
+```
+
+The project was tested successfully with `g++` using C++17. Microsoft `cl.exe`
+is not currently supported because it uses different command options.
+
+### C++ libraries
+
+Standard C++ headers work with the configured compiler, including:
+
+```cpp
+#include <iostream>
+#include <vector>
+#include <algorithm>
+#include <string>
+```
+
+> [!IMPORTANT]
+> Third-party C++ libraries are not automatically supported when they require
+> additional include paths, library paths, linker flags, or multi-file builds.
+> The current runner compiles one source file using fixed GCC/Clang-style C++17
+> options.
+
+## Python libraries
+
+Standard-library modules such as `math`, `json`, `statistics`, and `collections`
+work automatically. Install trusted third-party packages into the same Python
+environment used to start the server:
 
 ```cmd
 python -m pip install package-name
@@ -155,51 +207,59 @@ For example:
 
 ```cmd
 python -m pip install humanize
-python app.py
 ```
 
-Then a program can use:
+Version 3.0 successfully imported `humanize 4.16.0` through the authenticated
+runner during testing.
 
-```python
-import humanize
+Important library behaviour:
 
-print(humanize.intcomma(1234567))
+- Stop the server with `Ctrl+C` before changing its Python environment.
+- Install packages only from the host CMD, never from student code.
+- Separate Python tabs cannot currently import one another.
+- Packages installed only with `--user` may not be visible; use the activated
+  virtual environment.
+- GUI, hardware-specific, and operating-system-dependent packages may require
+  additional host configuration.
+
+## Testing
+
+Version 3.0 passed:
+
+- **12/12 permanent automated tests**
+- **12/12 Python/C++ execution-matrix tests**
+- Real C++17 compilation and execution using `g++`
+- Third-party Python package installation and import testing
+- Browser tests covering login, execution, settings, and both themes
+
+Run the isolated tests:
+
+```cmd
+python test_app.py
+python test_execution_matrix.py
 ```
 
-Version 2.0 was tested by installing `humanize 4.16.0` in a disposable virtual
-environment and importing it through the authenticated runner. The package was
-removed with the test environment afterward and is not a project dependency.
+The test suites use temporary data and do not modify the committed demonstration
+records.
 
-Stop the server with `Ctrl+C` before changing its Python environment, install
-only packages you trust, and restart the server afterward. Do not run `pip`
-from student code. Packages installed only with `--user` may not be visible
-because Python execution uses isolated mode; an activated virtual environment
-is recommended.
+## Stopping and upgrading
 
-### Import limitations
+Stop the server safely by returning to CMD and pressing `Ctrl+C`. Code, messages,
+snapshots, records, ownership, and permissions are normally saved when each
+change occurs. Connections, cursor positions, selections, typing indicators,
+and login sessions are temporary.
 
-- Standard-library modules and compatible packages installed in the server's
-  Python environment work.
-- Separate Python tabs are independent documents in Version 2.0. A tab such as
-  `helpers.py` cannot yet be imported from `main.py`.
-- C++ standard-library headers such as `<iostream>`, `<vector>`, and
-  `<algorithm>` work with the configured compiler.
-- Third-party C++ libraries that require include paths, library paths, or
-  linker flags are not automatically supported by the fixed compile command.
-- GUI applications, hardware-specific packages, and packages requiring extra
-  operating-system components may need additional host configuration.
+After replacing project files, restart the server and hard-refresh the browser:
 
-## Technology
+- Windows or Linux: `Ctrl+F5`
+- macOS: `Cmd+Shift+R`
 
-- Python
-- FastAPI
-- Uvicorn
-- WebSockets
-- HTML, CSS and JavaScript
-- CodeMirror 5
-- Lucide icons
-- QRCode and Pillow
-- g++ or clang++ for C++17 compilation
+## Mobile access
+
+Phones on the same trusted Wi-Fi can use the LAN address or QR code. Do not use
+`localhost` on a phone because it refers to the phone itself. Mobile support is
+experimental; landscape orientation and **Desktop site** mode may provide a
+better layout.
 
 ## Project structure
 
@@ -208,162 +268,35 @@ is recommended.
 ├── app.py
 ├── requirements.txt
 ├── test_app.py
+├── test_execution_matrix.py
 ├── data/
+│   ├── students.json
+│   ├── workspace_state.json
+│   ├── file_line_authors.json
 │   ├── access_control.json
 │   ├── chat_history.json
-│   ├── code_state.json
-│   ├── file_line_authors.json
-│   ├── line_authors.json
 │   ├── snapshots.json
-│   ├── students.json
-│   └── workspace_state.json
+│   ├── code_state.json
+│   └── line_authors.json
 ├── docs/
 │   └── images/
 └── static/
     ├── app.js
     ├── index.html
-    └── style.css
+    ├── style.css
+    └── icons/
 ```
 
-The committed JSON files contain only clean demonstration data. Before sharing
-a working copy, inspect every file in `data` and remove real student records,
-messages, code, snapshots and identifiers.
+## Technology
 
-## Run locally
-
-1. Create and activate a virtual environment.
-
-   **Windows Command Prompt**
-
-   ```cmd
-   python -m venv .venv
-   .venv\Scripts\activate.bat
-   ```
-
-   **macOS or Linux**
-
-   ```bash
-   python3 -m venv .venv
-   source .venv/bin/activate
-   ```
-
-2. Install the dependencies.
-
-   ```cmd
-   python -m pip install -r requirements.txt
-   ```
-
-3. If C++ execution is required, install and verify g++ or clang++ as described
-   in [C++ compiler requirements](#c-compiler-requirements).
-
-4. Start the application.
-
-   ```cmd
-   python app.py
-   ```
-
-5. Open `http://localhost:8000` on the host computer. Other participants on the
-   same trusted LAN can open the Wi-Fi address printed in CMD or scan the QR code
-   displayed by the application.
-
-## Demonstration accounts
-
-Use only the fictional records included with this public release.
-
-### Admin
-
-- Password: `12345`
-
-### Student: John Smith
-
-- Student ID: `ST001`
-- Date of birth: `15/06/2005` (`2005-06-15` in the login date field)
-- Password: `test1`
-
-### Student: Bob
-
-- Student ID: `ST002`
-- Date of birth: `01/01/2005` (`2005-01-01` in the login date field)
-- Password: `test1`
-
-These are temporary demonstration passwords. Do not use them for real student
-accounts.
-
-## Change the testing passwords
-
-Version 2.0 reads its passwords from environment variables. Set them in the
-same Windows Command Prompt session before starting the server:
-
-```cmd
-set "LIVE_EDITOR_ADMIN_PASSWORD=choose-a-new-admin-password"
-set "LIVE_EDITOR_STUDENT_PASSWORD=choose-a-new-shared-student-password"
-python app.py
-```
-
-This is better than editing the source, but the student password is still
-shared by every student in Version 2.0. Proper individual authentication must
-be added before production use.
-
-## Stop the server safely
-
-1. Return to the CMD window where `python app.py` is running.
-2. Press `Ctrl+C` once.
-3. Wait for the normal command prompt to return.
-4. Close CMD if it is no longer needed.
-
-Code, messages, snapshots, student records, ownership and access settings are
-normally saved when each change occurs. Active connections, cursor positions,
-selections, typing indicators and in-memory login sessions are temporary.
-Closing CMD during a JSON write or while the latest edit is still being sent
-can lose data, so `Ctrl+C` is safer than closing the window directly.
-
-## Mobile access (experimental)
-
-A phone on the same trusted Wi-Fi can open the LAN address or scan the QR code.
-Do not use `localhost` on the phone because that refers to the phone itself.
-Version 2.0 is not fully optimized for small screens; Desktop site mode and
-landscape orientation may provide a better temporary layout.
-
-## After upgrading
-
-Stop and restart the Python server after replacing files. Then hard-refresh the
-browser so it does not use older cached JavaScript or CSS:
-
-- Windows or Linux: `Ctrl+F5`
-- macOS: `Cmd+Shift+R`
-
-## Testing
-
-The test suite uses isolated temporary data and does not modify the committed
-demonstration records. Stop the live server, then run:
-
-Version 2.0 passed **10/10 permanent automated tests** and an additional **12/12 Python/C++ execution-matrix tests**.
-
-```cmd
-python test_app.py
-```
-
-The suite checks authentication, student management, session enforcement,
-multi-file tabs, line ownership, access grants, chat, snapshots, Python
-execution, Python control flow/functions/classes/imports, Python/C++ standard
-input, input-size limits, and C++ functions/loops/STL compilation when a
-supported compiler is available.
-
-## Security
-
-Participants can execute Python and C++ programs on the host computer. Use this
-prototype only with people you trust, on a trusted machine and isolated local
-network. Do not port-forward it, deploy it to a public server, or expose it to
-the public internet. Never use real student records in a public repository.
+Python, FastAPI, Uvicorn, WebSockets, HTML, CSS, JavaScript, CodeMirror 5,
+Lucide icons, QRCode, Pillow, and a supported C++ compiler.
 
 ## Credits
 
-The project began as a Rapid Application Development demonstration. Early
-feature ideas were shaped through classroom discussions and feedback.
-
-Version 2.0 combines later feedback-driven work on registered identities,
-multi-file collaboration, access control, resizable settings and focused direct
-messaging. Its public-history preparation removes private runtime data.
+The project began as a Rapid Application Development demonstration. Its
+features developed through classroom discussion, feedback, implementation, and
+repeated testing.
 
 ## Licence
 

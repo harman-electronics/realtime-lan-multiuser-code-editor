@@ -1,6 +1,7 @@
 # Python
 venv/
 .venv/
+.library-test-*/
 __pycache__/
 *.pyc
 *.pyo

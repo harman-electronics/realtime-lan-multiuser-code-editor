@@ -21,21 +21,22 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/addon/edit/matchbrackets.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/addon/selection/active-line.min.js"></script>
 
-  <link rel="stylesheet" href="/static/style.css?v=2.0-stdin" />
+  <link rel="stylesheet" href="/static/style.css?v=3.0-ui-input" />
 </head>
 <body>
   <div id="toastContainer" class="toast-container" aria-live="polite"></div>
 
   <header class="app-header">
     <div class="brand">
-      <div class="logo-icon"><i data-lucide="code-2"></i></div>
+      <div class="logo-icon"><i data-lucide="wifi"></i></div>
       <div class="brand-text">
-        <h1>WiFi CodeShare</h1>
-        <span class="badge lan-badge" id="lanBadge" title="View network connection details">
-          <i data-lucide="wifi"></i>
-          <span id="lanIpText">Detecting LAN...</span>
-        </span>
+        <h1><span>WiFi</span> <span class="brand-accent">CodeShare</span></h1>
       </div>
+      <span class="brand-divider" aria-hidden="true"></span>
+      <span class="badge lan-badge" id="lanBadge" title="View network connection details">
+        <span class="lan-status-dot" aria-hidden="true"></span>
+        <span id="lanIpText">Detecting LAN...</span>
+      </span>
     </div>
 
     <div class="presence-bar" id="presenceBar">
@@ -50,31 +51,9 @@
         <button id="btnFontInc" type="button" title="Increase font size"><i data-lucide="plus"></i></button>
       </div>
 
-      <button class="icon-btn" id="btnThemeToggle" type="button" title="Toggle light or dark theme">
-        <i data-lucide="moon" id="iconMoon"></i>
-        <i data-lucide="sun" id="iconSun" style="display:none;"></i>
-      </button>
-
-      <button class="icon-btn text-btn" id="btnShowQr" type="button" title="Share WiFi connection">
-        <i data-lucide="qr-code"></i><span>Share WiFi</span>
-      </button>
-
-      <button class="icon-btn text-btn" id="btnSnapshots" type="button" title="View code snapshots">
-        <i data-lucide="history"></i><span>Snapshots</span>
-      </button>
-
-      <button class="icon-btn text-btn" id="btnToggleChatBar" type="button" title="Toggle classroom chat">
-        <i data-lucide="message-square"></i><span>Chat</span>
-        <span class="chat-unread-badge" id="chatUnreadBadge" style="display:none;">0</span>
-      </button>
-
-      <button class="icon-btn text-btn permission-btn" id="btnSettings" type="button" style="display:none;" title="Open settings">
-        <i data-lucide="settings"></i><span id="settingsButtonLabel">Settings</span>
-      </button>
-
       <div class="user-badge-container" id="userProfileBadge" style="display:none;">
         <div class="user-avatar" id="myAvatar">?</div>
-        <span class="username-display" id="myUsername">Guest</span>
+        <span class="username-display" id="myUsername">User</span>
         <span class="admin-crown" id="myAdminCrown" style="display:none;" title="Admin">♛</span>
         <button class="mini-btn" id="btnLogout" type="button" title="Log out">
           <i data-lucide="log-out"></i>
@@ -83,12 +62,30 @@
     </div>
   </header>
 
-  <div class="typing-banner" id="typingBanner" style="display:none;">
-    <span class="typing-dots"><span class="dot"></span><span class="dot"></span><span class="dot"></span></span>
-    <span id="typingBannerText">Someone is editing...</span>
-  </div>
-
   <div class="app-viewport">
+    <nav class="workspace-rail" aria-label="Workspace shortcuts">
+      <div class="rail-actions">
+        <span class="rail-button active" title="Code workspace" aria-hidden="true"><i data-lucide="code-2"></i></span>
+        <button class="rail-button" id="btnToggleChatBar" type="button" title="Toggle classroom chat" aria-label="Toggle classroom chat">
+          <i data-lucide="message-square"></i><span class="rail-control-label">Chat</span>
+          <span class="chat-unread-badge" id="chatUnreadBadge" style="display:none;">0</span>
+        </button>
+        <button class="rail-button" id="btnShowQr" type="button" title="Share WiFi connection" aria-label="Share WiFi connection">
+          <i data-lucide="file"></i>
+        </button>
+        <button class="rail-button" id="btnSnapshots" type="button" title="View code snapshots" aria-label="View code snapshots">
+          <i data-lucide="box"></i>
+        </button>
+        <button class="rail-button" id="btnThemeToggle" type="button" title="Toggle light or dark theme" aria-label="Toggle light or dark theme">
+          <i data-lucide="moon" id="iconMoon"></i>
+          <i data-lucide="sun" id="iconSun" style="display:none;"></i>
+        </button>
+      </div>
+      <button class="rail-button rail-settings" id="btnSettings" type="button" style="display:none;" title="Open settings" aria-label="Open settings">
+        <i data-lucide="settings"></i><span id="settingsButtonLabel">Settings</span>
+      </button>
+    </nav>
+
     <main class="main-container">
       <div class="file-tabs-shell">
         <div class="file-tabs" id="fileTabs" role="tablist" aria-label="Open code files"></div>
@@ -100,22 +97,24 @@
 
       <div class="editor-toolbar">
         <div class="toolbar-left">
-          <span class="file-tag" id="currentFileTag"><i data-lucide="file-code-2"></i> main.py</span>
-          <span class="language-badge" id="currentLanguageBadge">Python</span>
+          <button class="btn btn-primary btn-sm" id="btnRunCode" type="button">
+            <i data-lucide="play"></i><span id="runButtonLabel">Run Python</span>
+          </button>
           <span class="status-indicator" id="wsStatus">
             <span class="status-dot"></span><span id="wsStatusText">Connecting...</span>
           </span>
         </div>
 
         <div class="toolbar-right">
-          <button class="btn btn-secondary btn-sm" id="btnSaveSnapshot" type="button">
+          <span class="workspace-file-meta">
+            <span class="file-tag" id="currentFileTag"><i data-lucide="file-code-2"></i> main.py</span>
+            <span class="language-badge" id="currentLanguageBadge">Python</span>
+          </span>
+          <button class="btn btn-secondary btn-sm toolbar-icon-action" id="btnSaveSnapshot" type="button" title="Save snapshot">
             <i data-lucide="bookmark"></i> Save Snapshot
           </button>
-          <button class="btn btn-secondary btn-sm" id="btnCopyCode" type="button">
+          <button class="btn btn-secondary btn-sm toolbar-icon-action" id="btnCopyCode" type="button" title="Copy code">
             <i data-lucide="copy"></i> Copy Code
-          </button>
-          <button class="btn btn-primary btn-sm" id="btnRunCode" type="button">
-            <i data-lucide="play"></i><span id="runButtonLabel">Run Python</span>
           </button>
         </div>
       </div>
@@ -127,8 +126,7 @@
       <div class="output-drawer" id="outputDrawer">
         <div class="drawer-header">
           <div class="drawer-title">
-            <i data-lucide="terminal"></i>
-            <span>Execution Output Console</span>
+            <button class="drawer-tab active" id="tabTerminalOutput" type="button"><span>Terminal</span></button>
             <span class="exec-time-tag" id="execTimeTag" style="display:none;">0.00s</span>
           </div>
           <div class="drawer-actions">
@@ -141,13 +139,13 @@
             <div class="program-input-header">
               <div>
                 <label id="programInputLabel" for="programInput">Program Input <span>(stdin)</span></label>
-                <small>Used by Python input() and C++ std::cin. Saved on this PC for the current file.</small>
+                <small>Python input(): one value per line. C++ std::cin: spaces or new lines. Saved on this PC for the current file.</small>
               </div>
               <button class="mini-icon-btn" id="btnClearProgramInput" type="button" title="Clear program input" aria-label="Clear program input">
                 <i data-lucide="eraser"></i>
               </button>
             </div>
-            <textarea id="programInput" class="program-input" rows="2" maxlength="20000" spellcheck="false" placeholder="Enter values before running, for example: 10 5"></textarea>
+            <textarea id="programInput" class="program-input" rows="2" maxlength="20000" spellcheck="false" placeholder="Example:&#10;10&#10;5"></textarea>
           </section>
           <pre class="console-output" id="consoleOutput">Log in, select a file, and run your code.</pre>
         </div>
@@ -207,7 +205,6 @@
       </div>
 
       <form class="chat-input-form" id="frmChat">
-        <button type="button" class="mini-icon-btn" id="btnAttachFile" title="Add an attachment label"><i data-lucide="paperclip"></i></button>
         <textarea id="txtChatMessage" class="chat-textarea" rows="1" placeholder="Type a message..." autocomplete="off"></textarea>
         <button type="submit" class="chat-send-btn" id="btnSendChat" title="Send message"><i data-lucide="send"></i></button>
       </form>
@@ -291,6 +288,16 @@
       </div>
 
       <div class="settings-scroll">
+        <section class="settings-section appearance-settings-entry">
+          <div>
+            <h3><i data-lucide="palette"></i> Personal appearance</h3>
+            <p class="settings-help">Choose a wallpaper and tune the theme for this PC only.</p>
+          </div>
+          <button class="btn btn-secondary" id="btnAdminAppearance" type="button">
+            <i data-lucide="image"></i> Open appearance
+          </button>
+        </section>
+
         <section class="settings-section">
           <h3><i data-lucide="user-cog"></i> Admin profile</h3>
           <div class="inline-form">
@@ -354,7 +361,135 @@
         <h2>Your Code Access</h2>
         <p>Choose which students may edit lines that you own.</p>
       </div>
+      <section class="settings-section appearance-settings-entry">
+        <div>
+          <h3><i data-lucide="palette"></i> Personal appearance</h3>
+          <p class="settings-help">Choose a wallpaper and tune the theme for this PC only.</p>
+        </div>
+        <button class="btn btn-secondary" id="btnStudentAppearance" type="button">
+          <i data-lucide="image"></i> Open appearance
+        </button>
+      </section>
       <div class="access-list" id="studentCodeAccessList"></div>
+    </div>
+  </dialog>
+
+  <dialog id="dlgAppearance" class="custom-dialog appearance-dialog">
+    <div class="appearance-dialog-card">
+      <header class="appearance-dialog-header">
+        <button class="appearance-back" id="btnBackAppearance" type="button" aria-label="Back to settings">
+          <i data-lucide="arrow-left"></i>
+          <span>Back</span>
+        </button>
+        <h2>Personal Appearance</h2>
+        <button class="dialog-close appearance-close" id="btnCloseAppearance" type="button" aria-label="Close personal appearance">
+          <i data-lucide="x"></i>
+        </button>
+      </header>
+
+      <div class="appearance-dialog-body">
+        <section class="appearance-content">
+          <h3>Wallpaper</h3>
+          <div class="wallpaper-preview" id="wallpaperPreview">
+            <img id="wallpaperPreviewImage" alt="Selected wallpaper preview" />
+            <div class="wallpaper-preview-empty" id="wallpaperPreviewEmpty">
+              <i data-lucide="image"></i>
+              <strong>No wallpaper selected</strong>
+              <span>Choose an image stored on this PC.</span>
+            </div>
+          </div>
+
+          <div class="wallpaper-actions">
+            <input id="inputWallpaper" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden />
+            <button class="btn btn-secondary" id="btnChooseWallpaper" type="button">
+              <i data-lucide="image-plus"></i> Choose wallpaper
+            </button>
+            <button class="appearance-remove" id="btnRemoveWallpaper" type="button">
+              <i data-lucide="trash-2"></i> Remove
+            </button>
+          </div>
+          <p class="device-only-note"><i data-lucide="monitor"></i> Saved on this PC only</p>
+
+          <div class="appearance-control-row">
+            <div>
+              <strong>Adapt interface colours to wallpaper</strong>
+              <small>Adjusts accents and UI tones for readability.</small>
+            </div>
+            <label class="access-switch appearance-switch">
+              <input type="checkbox" id="chkAdaptiveColors" checked aria-label="Adapt interface colours to wallpaper" />
+              <span class="access-switch-track"></span>
+              <span class="sr-only" id="adaptiveColorsState">On</span>
+            </label>
+          </div>
+
+          <div class="appearance-control-row theme-mode-row">
+            <div>
+              <strong>Theme over wallpaper</strong>
+              <small>Applies the selected theme to interface elements.</small>
+            </div>
+            <div class="theme-mode-options" role="radiogroup" aria-label="Theme over wallpaper">
+              <button type="button" class="theme-mode-option active" data-appearance-theme="auto" role="radio" aria-checked="true">
+                <i data-lucide="circle-dot"></i> Auto
+              </button>
+              <button type="button" class="theme-mode-option" data-appearance-theme="light" role="radio" aria-checked="false">
+                <i data-lucide="sun"></i> Light
+              </button>
+              <button type="button" class="theme-mode-option" data-appearance-theme="dark" role="radio" aria-checked="false">
+                <i data-lucide="moon"></i> Dark
+              </button>
+            </div>
+          </div>
+
+          <div class="appearance-control-row wallpaper-sizing-row">
+            <div>
+              <strong>Wallpaper layout</strong>
+              <small>Fill crops the edges; Fit shows the complete wallpaper.</small>
+            </div>
+            <div class="theme-mode-options" role="radiogroup" aria-label="Wallpaper layout">
+              <button type="button" class="theme-mode-option wallpaper-size-option active" data-wallpaper-size="fill" role="radio" aria-checked="true">
+                <i data-lucide="maximize"></i> Fill
+              </button>
+              <button type="button" class="theme-mode-option wallpaper-size-option" data-wallpaper-size="fit" role="radio" aria-checked="false">
+                <i data-lucide="minimize"></i> Fit
+              </button>
+            </div>
+          </div>
+
+          <label class="appearance-range-row" for="rangeWallpaperDimming">
+            <span>
+              <strong>Background dimming</strong>
+              <small>Darken wallpaper to improve code readability.</small>
+            </span>
+            <input id="rangeWallpaperDimming" type="range" min="0" max="75" step="1" value="30" />
+            <output id="wallpaperDimmingValue" for="rangeWallpaperDimming">30%</output>
+          </label>
+
+          <label class="appearance-range-row" for="rangeWallpaperVisibility">
+            <span>
+              <strong>Wallpaper visibility</strong>
+              <small>Increase this to show more wallpaper through the interface.</small>
+            </span>
+            <input id="rangeWallpaperVisibility" type="range" min="0" max="100" step="1" value="65" />
+            <output id="wallpaperVisibilityValue" for="rangeWallpaperVisibility">65%</output>
+          </label>
+
+          <label class="appearance-range-row" for="rangePanelBlur">
+            <span>
+              <strong>Panel blur</strong>
+              <small>Apply blur to panels for better focus.</small>
+            </span>
+            <input id="rangePanelBlur" type="range" min="0" max="30" step="1" value="12" />
+            <output id="panelBlurValue" for="rangePanelBlur">12px</output>
+          </label>
+
+          <div class="form-message appearance-message" id="appearanceMessage" role="status"></div>
+        </section>
+      </div>
+
+      <footer class="appearance-dialog-footer">
+        <button class="btn btn-secondary" id="btnCancelAppearance" type="button">Cancel</button>
+        <button class="btn btn-primary" id="btnSaveAppearance" type="button">Save appearance</button>
+      </footer>
     </div>
   </dialog>
 
@@ -415,6 +550,6 @@
     </div>
   </dialog>
 
-  <script src="/static/app.js?v=2.0-stdin"></script>
+  <script src="/static/app.js?v=3.0-ui-input"></script>
 </body>
 </html>
