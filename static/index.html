@@ -21,7 +21,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/addon/edit/matchbrackets.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/addon/selection/active-line.min.js"></script>
 
-  <link rel="stylesheet" href="/static/style.css?v=3.0-ui-input" />
+  <link rel="stylesheet" href="/static/style.css?v=4.0-final" />
 </head>
 <body>
   <div id="toastContainer" class="toast-container" aria-live="polite"></div>
@@ -51,9 +51,14 @@
         <button id="btnFontInc" type="button" title="Increase font size"><i data-lucide="plus"></i></button>
       </div>
 
+      <button class="join-request-notification" id="btnJoinRequestNotifications" type="button" style="display:none;" title="Open Guest join requests" aria-label="Open Guest join requests">
+        <i data-lucide="bell"></i>
+        <span class="join-request-badge" id="joinRequestNotificationCount" style="display:none;">0</span>
+      </button>
+
       <div class="user-badge-container" id="userProfileBadge" style="display:none;">
         <div class="user-avatar" id="myAvatar">?</div>
-        <span class="username-display" id="myUsername">User</span>
+        <span class="username-display" id="myUsername">Guest</span>
         <span class="admin-crown" id="myAdminCrown" style="display:none;" title="Admin">♛</span>
         <button class="mini-btn" id="btnLogout" type="button" title="Log out">
           <i data-lucide="log-out"></i>
@@ -223,12 +228,12 @@
         <button class="role-card admin-role-card" id="btnChooseAdmin" type="button">
           <span class="role-icon">♛</span>
           <strong>Admin</strong>
-          <small>Manage students, files, and access</small>
+          <small>Review Guests, files, and access</small>
         </button>
-        <button class="role-card" id="btnChooseStudent" type="button">
-          <i data-lucide="graduation-cap"></i>
-          <strong>Student</strong>
-          <small>Sign in using your saved record</small>
+        <button class="role-card" id="btnChooseGuest" type="button">
+          <i data-lucide="user-round"></i>
+          <strong>Guest</strong>
+          <small>Request permission to join</small>
         </button>
       </div>
 
@@ -244,24 +249,13 @@
         <button class="btn btn-primary btn-block" type="submit"><i data-lucide="log-in"></i> Sign in as Admin</button>
       </form>
 
-      <form id="frmStudentLogin" class="login-form" style="display:none;">
-        <button class="back-link" id="btnBackFromStudent" type="button"><i data-lucide="arrow-left"></i> Back</button>
+      <form id="frmGuestLogin" class="login-form" style="display:none;">
+        <button class="back-link" id="btnBackFromGuest" type="button"><i data-lucide="arrow-left"></i> Back</button>
         <div class="form-group">
-          <label for="txtStudentIdLogin">Student ID</label>
-          <input type="text" id="txtStudentIdLogin" class="custom-input" maxlength="30" autocomplete="username" required />
+          <label for="txtGuestName">Your full name</label>
+          <input type="text" id="txtGuestName" class="custom-input" maxlength="50" autocomplete="name" placeholder="For example, Bob" required />
         </div>
-        <div class="form-group">
-          <label for="txtStudentDobLogin">Date of birth</label>
-          <input type="date" id="txtStudentDobLogin" class="custom-input" required />
-        </div>
-        <div class="form-group">
-          <label for="txtStudentPassword">Student password</label>
-          <div class="password-field">
-            <input type="password" id="txtStudentPassword" class="custom-input" autocomplete="current-password" required />
-            <button type="button" class="password-toggle" data-password-target="txtStudentPassword" title="Show or hide password"><i data-lucide="eye"></i></button>
-          </div>
-        </div>
-        <button class="btn btn-primary btn-block" type="submit"><i data-lucide="log-in"></i> Sign in as Student</button>
+        <button class="btn btn-primary btn-block" id="btnRequestGuestJoin" type="submit"><i data-lucide="send"></i> Request to join</button>
       </form>
 
       <div id="loginColorSection" class="login-color-section" style="display:none;">
@@ -282,7 +276,7 @@
         <div class="dialog-icon-circle admin-icon">♛</div>
         <h2>Admin Settings</h2>
         <p>
-          Manage your classroom, files, and global code access.
+          Manage Guest requests, files, and global code access.
           <span class="settings-resize-note">Drag the bottom-right corner to resize.</span>
         </p>
       </div>
@@ -307,70 +301,61 @@
           <div class="form-message" id="adminNameMessage"></div>
         </section>
 
-        <section class="settings-section">
-          <h3><i data-lucide="user-plus"></i> Add user</h3>
-          <form id="frmAddStudent" class="student-record-form">
-            <div class="form-grid">
-              <div class="form-group">
-                <label for="txtNewStudentName">Full name</label>
-                <input type="text" id="txtNewStudentName" class="custom-input" maxlength="50" required />
-              </div>
-              <div class="form-group">
-                <label for="txtNewStudentId">Student ID</label>
-                <input type="text" id="txtNewStudentId" class="custom-input" maxlength="30" required />
-              </div>
-              <div class="form-group">
-                <label for="txtNewStudentDob">Date of birth</label>
-                <input type="date" id="txtNewStudentDob" class="custom-input" required />
-              </div>
-              <div class="form-group">
-                <label for="txtNewStudentInfo">Other information (optional)</label>
-                <input type="text" id="txtNewStudentInfo" class="custom-input" maxlength="250" placeholder="Class, group, notes..." />
-              </div>
+        <section class="settings-section join-requests-section" id="joinRequestsSection">
+          <div class="settings-section-heading">
+            <div>
+              <h3><i data-lucide="user-check"></i> Join requests</h3>
+              <p class="settings-help">Accept or reject Guests waiting to enter the classroom.</p>
             </div>
-            <button class="btn btn-primary" type="submit"><i data-lucide="plus"></i> Add student</button>
-          </form>
-          <div class="form-message" id="studentRecordMessage"></div>
-          <div class="records-list" id="studentRecordsList"></div>
+            <span class="join-request-count" id="joinRequestsSettingsCount" style="display:none;">0</span>
+          </div>
+          <div class="join-requests-list" id="joinRequestsList"></div>
+        </section>
+
+        <section class="settings-section">
+          <h3><i data-lucide="users-round"></i> Approved Guests</h3>
+          <p class="settings-help">Guests are added here only after an Admin accepts their join request.</p>
+          <div class="form-message" id="guestRecordMessage"></div>
+          <div class="records-list" id="guestRecordsList"></div>
         </section>
 
         <section class="settings-section">
           <h3><i data-lucide="files"></i> File tab limit</h3>
           <div class="inline-form">
-            <input type="number" id="numTabLimit" class="custom-input compact-input" min="1" max="6" value="6" />
+            <input type="number" id="numTabLimit" class="custom-input compact-input" min="1" max="15" value="6" />
             <button class="btn btn-primary" id="btnSaveTabLimit" type="button">Save limit</button>
           </div>
-          <small class="form-help">Only Admin can create or close files. Maximum configurable limit: 6.</small>
+          <small class="form-help">Only Admin can create or close files. Maximum configurable limit: 15.</small>
           <div class="form-message" id="tabLimitMessage"></div>
         </section>
 
         <section class="settings-section">
           <h3><i data-lucide="unlock"></i> Global code access</h3>
-          <p class="settings-help">When enabled, that student can edit code owned by anyone. All switches are off by default.</p>
+          <p class="settings-help">When enabled, that Guest can edit code owned by anyone. All switches are off by default.</p>
           <div class="access-list" id="adminGlobalAccessList"></div>
         </section>
       </div>
     </div>
   </dialog>
 
-  <dialog id="dlgStudentSettings" class="custom-dialog">
+  <dialog id="dlgGuestSettings" class="custom-dialog">
     <div class="dialog-card glass-card wide-dialog">
-      <button class="dialog-close" id="btnCloseStudentSettings" type="button"><i data-lucide="x"></i></button>
+      <button class="dialog-close" id="btnCloseGuestSettings" type="button"><i data-lucide="x"></i></button>
       <div class="dialog-header">
         <div class="dialog-icon-circle"><i data-lucide="key-round"></i></div>
         <h2>Your Code Access</h2>
-        <p>Choose which students may edit lines that you own.</p>
+        <p>Choose which Guests may edit lines that you own.</p>
       </div>
       <section class="settings-section appearance-settings-entry">
         <div>
           <h3><i data-lucide="palette"></i> Personal appearance</h3>
           <p class="settings-help">Choose a wallpaper and tune the theme for this PC only.</p>
         </div>
-        <button class="btn btn-secondary" id="btnStudentAppearance" type="button">
+        <button class="btn btn-secondary" id="btnGuestAppearance" type="button">
           <i data-lucide="image"></i> Open appearance
         </button>
       </section>
-      <div class="access-list" id="studentCodeAccessList"></div>
+      <div class="access-list" id="guestCodeAccessList"></div>
     </div>
   </dialog>
 
@@ -550,6 +535,6 @@
     </div>
   </dialog>
 
-  <script src="/static/app.js?v=3.0-ui-input"></script>
+  <script src="/static/app.js?v=4.0-ownership-fix"></script>
 </body>
 </html>

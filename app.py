@@ -20,7 +20,7 @@ import qrcode
 from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 app = FastAPI(title="Live Code Editor")
@@ -32,9 +32,12 @@ STATIC_DIR = os.path.join(BASE_DIR, "static")
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(STATIC_DIR, exist_ok=True)
 
+USERS_FILE = os.path.join(DATA_DIR, "users.json")  # Kept for legacy data compatibility.
 CODE_FILE = os.path.join(DATA_DIR, "code_state.json")
 LEGACY_LINE_AUTHORS_FILE = os.path.join(DATA_DIR, "line_authors.json")
 STUDENTS_FILE = os.path.join(DATA_DIR, "students.json")
+GUESTS_FILE = os.path.join(DATA_DIR, "guests.json")
+JOIN_REQUESTS_FILE = os.path.join(DATA_DIR, "join_requests.json")
 WORKSPACE_FILE = os.path.join(DATA_DIR, "workspace_state.json")
 FILE_AUTHORS_FILE = os.path.join(DATA_DIR, "file_line_authors.json")
 ACCESS_FILE = os.path.join(DATA_DIR, "access_control.json")
@@ -42,12 +45,12 @@ SNAPSHOTS_FILE = os.path.join(DATA_DIR, "snapshots.json")
 CHAT_FILE = os.path.join(DATA_DIR, "chat_history.json")
 
 ADMIN_PASSWORD = os.environ.get("LIVE_EDITOR_ADMIN_PASSWORD", "12345")
-STUDENT_PASSWORD = os.environ.get("LIVE_EDITOR_STUDENT_PASSWORD", "test1")
 SESSION_LIFETIME_SECONDS = 12 * 60 * 60
+JOIN_REQUEST_TTL_SECONDS = 30 * 60
 MAX_MESSAGE_LENGTH = 5000
 MAX_CODE_SIZE = 500_000
 MAX_STDIN_SIZE = 20_000
-MAX_TAB_LIMIT = 6
+MAX_TAB_LIMIT = 15
 
 COLOR_PALETTE = [
     "#FF5722", "#E91E63", "#9C27B0", "#673AB7",
@@ -203,15 +206,10 @@ def apply_delta_to_code(
 class LoginRequest(BaseModel):
     role: str
     password: str
-    student_id: Optional[str] = None
-    date_of_birth: Optional[str] = None
 
 
-class StudentRecordRequest(BaseModel):
+class GuestJoinRequest(BaseModel):
     full_name: str
-    student_id: str
-    date_of_birth: str
-    other_info: Dict[str, str] = Field(default_factory=dict)
 
 
 class AdminNameRequest(BaseModel):
@@ -247,9 +245,10 @@ class ConnectionManager:
         self.user_data: Dict[str, Dict[str, Any]] = {}
         self.sessions: Dict[str, Dict[str, Any]] = {}
         self.state_lock = asyncio.Lock()
-        self.students: List[Dict[str, Any]] = load_json(
-            STUDENTS_FILE,
-            json.loads(json.dumps(DEFAULT_STUDENTS)),
+        self.guests: List[Dict[str, Any]] = self._load_guests()
+        self.join_requests: List[Dict[str, Any]] = load_json(
+            JOIN_REQUESTS_FILE,
+            [],
         )
         self.workspace = self._load_workspace()
         self.line_authors = self._load_line_authors()
@@ -291,6 +290,29 @@ class ConnectionManager:
             )
         return workspace
 
+    def _load_guests(self) -> List[Dict[str, Any]]:
+        if os.path.exists(GUESTS_FILE):
+            guests = load_json(GUESTS_FILE, [])
+            return guests if isinstance(guests, list) else []
+        legacy_students = load_json(
+            STUDENTS_FILE,
+            json.loads(json.dumps(DEFAULT_STUDENTS)),
+        )
+        migrated = [
+            {
+                "account_id": student.get("account_id")
+                or f"guest_{uuid.uuid4().hex[:16]}",
+                "full_name": student.get("full_name", "Guest"),
+                "active": bool(student.get("active", True)),
+                "joined_at": student.get("joined_at")
+                or datetime.now().isoformat(timespec="seconds"),
+            }
+            for student in legacy_students
+            if isinstance(student, dict) and student.get("full_name")
+        ]
+        save_json(GUESTS_FILE, migrated)
+        return migrated
+
     def _load_line_authors(self) -> Dict[str, Dict[str, Dict[str, str]]]:
         saved = load_json(FILE_AUTHORS_FILE, {})
         if saved:
@@ -314,8 +336,11 @@ class ConnectionManager:
             }
         return {first_file_id: migrated}
 
-    def save_students(self) -> None:
-        save_json(STUDENTS_FILE, self.students)
+    def save_guests(self) -> None:
+        save_json(GUESTS_FILE, self.guests)
+
+    def save_join_requests(self) -> None:
+        save_json(JOIN_REQUESTS_FILE, self.join_requests)
 
     def save_workspace(self) -> None:
         save_json(WORKSPACE_FILE, self.workspace)
@@ -326,19 +351,20 @@ class ConnectionManager:
     def save_access(self) -> None:
         save_json(ACCESS_FILE, self.access_control)
 
-    def get_student(self, account_id: str) -> Optional[Dict[str, Any]]:
+    def get_guest(self, account_id: str) -> Optional[Dict[str, Any]]:
         return next(
-            (student for student in self.students if student["account_id"] == account_id),
+            (guest for guest in self.guests if guest["account_id"] == account_id),
             None,
         )
 
-    def get_student_by_id(self, student_id: str) -> Optional[Dict[str, Any]]:
-        normalized = student_id.strip().upper()
+    def get_guest_by_name(self, full_name: str) -> Optional[Dict[str, Any]]:
+        normalized = normalize_display_name(full_name).casefold()
         return next(
             (
-                student
-                for student in self.students
-                if student.get("student_id", "").upper() == normalized
+                guest
+                for guest in self.guests
+                if guest.get("active", True)
+                and str(guest.get("full_name", "")).casefold() == normalized
             ),
             None,
         )
@@ -355,7 +381,7 @@ class ConnectionManager:
             "files": self.workspace["files"],
         }
 
-    def public_students(self) -> List[Dict[str, Any]]:
+    def public_guests(self) -> List[Dict[str, Any]]:
         connected_ids = {
             user.get("account_id")
             for user in self.user_data.values()
@@ -363,14 +389,179 @@ class ConnectionManager:
         }
         return [
             {
-                "account_id": student["account_id"],
-                "full_name": student["full_name"],
-                "student_id": student["student_id"],
-                "online": student["account_id"] in connected_ids,
+                "account_id": guest["account_id"],
+                "full_name": guest["full_name"],
+                "online": guest["account_id"] in connected_ids,
             }
-            for student in self.students
-            if student.get("active", True)
+            for guest in self.guests
+            if guest.get("active", True)
         ]
+
+    def expire_join_requests(self) -> bool:
+        now = time.time()
+        changed = False
+        for request in self.join_requests:
+            if (
+                request.get("status") == "pending"
+                and now - float(request.get("created_at_epoch", now))
+                > JOIN_REQUEST_TTL_SECONDS
+            ):
+                request["status"] = "expired"
+                request["resolved_at"] = datetime.now().isoformat(timespec="seconds")
+                changed = True
+        if changed:
+            self.save_join_requests()
+        return changed
+
+    def public_join_requests(self) -> List[Dict[str, Any]]:
+        self.expire_join_requests()
+        return [
+            {
+                "id": request["id"],
+                "full_name": request["full_name"],
+                "status": request["status"],
+                "requested_at": request["requested_at"],
+            }
+            for request in reversed(self.join_requests)
+            if request.get("status") == "pending"
+        ]
+
+    def create_guest_join_request(self, full_name: str) -> Dict[str, Any]:
+        name = normalize_display_name(full_name)
+        self.expire_join_requests()
+        if any(
+            request.get("status") == "pending"
+            and str(request.get("full_name", "")).casefold() == name.casefold()
+            for request in self.join_requests
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail=f"A join request for {name} is already waiting for Admin approval.",
+            )
+        pending_count = sum(
+            request.get("status") == "pending"
+            for request in self.join_requests
+        )
+        if pending_count >= 50:
+            raise HTTPException(
+                status_code=429,
+                detail="Too many join requests are waiting. Ask the Admin to review them.",
+            )
+        request = {
+            "id": f"request_{uuid.uuid4().hex[:16]}",
+            "request_token": secrets.token_urlsafe(32),
+            "full_name": name,
+            "status": "pending",
+            "requested_at": datetime.now().isoformat(timespec="seconds"),
+            "created_at_epoch": time.time(),
+            "account_id": None,
+            "session_token": None,
+        }
+        self.join_requests.append(request)
+        self.join_requests = self.join_requests[-200:]
+        self.save_join_requests()
+        return request
+
+    def get_join_request(self, request_id: str) -> Optional[Dict[str, Any]]:
+        return next(
+            (
+                request
+                for request in self.join_requests
+                if request.get("id") == request_id
+            ),
+            None,
+        )
+
+    def approve_guest_join_request(self, request_id: str) -> Dict[str, Any]:
+        request = self.get_join_request(request_id)
+        if not request:
+            raise HTTPException(status_code=404, detail="Join request not found.")
+        if request.get("status") != "pending":
+            raise HTTPException(status_code=409, detail="This join request was already resolved.")
+        guest = self.get_guest_by_name(request["full_name"])
+        if guest and self.is_account_connected(guest["account_id"]):
+            raise HTTPException(
+                status_code=409,
+                detail=f"{guest['full_name']} already has an active session.",
+            )
+        if not guest:
+            guest = {
+                "account_id": f"guest_{uuid.uuid4().hex[:16]}",
+                "full_name": request["full_name"],
+                "active": True,
+                "joined_at": datetime.now().isoformat(timespec="seconds"),
+            }
+            self.guests.append(guest)
+            self.save_guests()
+        self.revoke_account_sessions(guest["account_id"])
+        request["status"] = "approved"
+        request["account_id"] = guest["account_id"]
+        request["resolved_at"] = datetime.now().isoformat(timespec="seconds")
+        self.save_join_requests()
+        return request
+
+    def reject_guest_join_request(self, request_id: str) -> Dict[str, Any]:
+        request = self.get_join_request(request_id)
+        if not request:
+            raise HTTPException(status_code=404, detail="Join request not found.")
+        if request.get("status") != "pending":
+            raise HTTPException(status_code=409, detail="This join request was already resolved.")
+        request["status"] = "rejected"
+        request["resolved_at"] = datetime.now().isoformat(timespec="seconds")
+        self.save_join_requests()
+        return request
+
+    def get_guest_join_status(
+        self,
+        request_id: str,
+        request_token: str,
+    ) -> Dict[str, Any]:
+        self.expire_join_requests()
+        request = self.get_join_request(request_id)
+        if (
+            not request
+            or not request.get("request_token")
+            or not hmac.compare_digest(
+                str(request["request_token"]),
+                str(request_token),
+            )
+        ):
+            raise HTTPException(status_code=404, detail="Join request not found.")
+        response: Dict[str, Any] = {
+            "status": request.get("status", "expired"),
+            "full_name": request.get("full_name", "Guest"),
+        }
+        if request.get("status") != "approved":
+            return response
+        guest = self.get_guest(str(request.get("account_id", "")))
+        if not guest or not guest.get("active", True):
+            raise HTTPException(status_code=410, detail="This Guest account is no longer available.")
+        token = request.get("session_token")
+        if not token or not self.get_session(token):
+            if self.is_account_connected(guest["account_id"]):
+                raise HTTPException(
+                    status_code=409,
+                    detail="This Guest already has an active session.",
+                )
+            token = self.create_session(
+                "guest",
+                guest["account_id"],
+                guest["full_name"],
+            )
+            request["session_token"] = token
+            request["consumed_at"] = datetime.now().isoformat(timespec="seconds")
+            self.save_join_requests()
+        response.update(
+            {
+                "token": token,
+                "user": {
+                    "account_id": guest["account_id"],
+                    "username": guest["full_name"],
+                    "role": "guest",
+                },
+            }
+        )
+        return response
 
     def create_session(self, role: str, account_id: str, username: str) -> str:
         token = secrets.token_urlsafe(32)
@@ -528,6 +719,25 @@ class ConnectionManager:
                 except Exception:
                     self.disconnect(connection_id)
 
+    async def send_to_role(
+        self,
+        role: str,
+        message: Dict[str, Any],
+    ) -> None:
+        payload = json.dumps(message)
+        connection_ids = [
+            connection_id
+            for connection_id, user in self.user_data.items()
+            if user.get("role") == role
+        ]
+        for connection_id in connection_ids:
+            websocket = self.active_connections.get(connection_id)
+            if websocket:
+                try:
+                    await websocket.send_text(payload)
+                except Exception:
+                    self.disconnect(connection_id)
+
     def can_edit_owner(self, actor: Dict[str, Any], owner_account_id: str) -> bool:
         actor_id = actor.get("account_id")
         if actor.get("role") == "admin":
@@ -598,7 +808,7 @@ class ConnectionManager:
         preserved_owner = old_authors.get(str(start_line))
         actor_owner = {
             "account_id": actor.get("account_id", ""),
-            "author": actor.get("username", "Student"),
+            "author": actor.get("username", "Guest"),
             "color": actor.get("color", "#38BDF8"),
         }
         resulting_lines = new_code.split("\n")
@@ -832,57 +1042,17 @@ def get_info() -> Dict[str, Any]:
 @app.post("/api/auth/login")
 async def login(request: LoginRequest) -> Dict[str, Any]:
     role = request.role.strip().lower()
-    if role == "admin":
-        if not hmac.compare_digest(request.password, ADMIN_PASSWORD):
-            raise HTTPException(status_code=401, detail="Incorrect Admin password.")
-        token = manager.create_session("admin", "admin", "Admin")
-        return {
-            "token": token,
-            "user": {"account_id": "admin", "username": "Admin", "role": "admin"},
-        }
-
-    if role != "student":
-        raise HTTPException(status_code=422, detail="Choose Admin or Student.")
-    if not request.student_id or not request.date_of_birth:
+    if role != "admin":
         raise HTTPException(
             status_code=422,
-            detail="Student ID and date of birth are required.",
+            detail="Guests must request access from the Guest login option.",
         )
-    if not hmac.compare_digest(request.password, STUDENT_PASSWORD):
-        raise HTTPException(
-            status_code=401,
-            detail="Student ID, date of birth, or password is incorrect.",
-        )
-    student_id = normalize_student_id(request.student_id)
-    date_of_birth = normalize_date(request.date_of_birth)
-    student = manager.get_student_by_id(student_id)
-    if (
-        not student
-        or not student.get("active", True)
-        or student.get("date_of_birth") != date_of_birth
-    ):
-        raise HTTPException(
-            status_code=401,
-            detail="Student ID, date of birth, or password is incorrect.",
-        )
-    if manager.is_account_connected(student["account_id"]):
-        raise HTTPException(
-            status_code=409,
-            detail="This student already has an active session.",
-        )
-    manager.revoke_account_sessions(student["account_id"])
-    token = manager.create_session(
-        "student",
-        student["account_id"],
-        student["full_name"],
-    )
+    if not hmac.compare_digest(request.password, ADMIN_PASSWORD):
+        raise HTTPException(status_code=401, detail="Incorrect Admin password.")
+    token = manager.create_session("admin", "admin", "Admin")
     return {
         "token": token,
-        "user": {
-            "account_id": student["account_id"],
-            "username": student["full_name"],
-            "role": "student",
-        },
+        "user": {"account_id": "admin", "username": "Admin", "role": "admin"},
     }
 
 
@@ -919,54 +1089,124 @@ async def logout(
     return {"status": "success"}
 
 
-@app.get("/api/students")
-async def get_students(
-    authorization: Optional[str] = Header(default=None),
+@app.post("/api/guest-requests")
+async def create_guest_request(
+    request: GuestJoinRequest,
 ) -> Dict[str, Any]:
-    require_session(authorization, role="admin")
-    return {"students": manager.students}
-
-
-@app.post("/api/students")
-async def add_student(
-    request: StudentRecordRequest,
-    authorization: Optional[str] = Header(default=None),
-) -> Dict[str, Any]:
-    require_session(authorization, role="admin")
-    student_id = normalize_student_id(request.student_id)
-    if manager.get_student_by_id(student_id):
-        raise HTTPException(status_code=409, detail="Student ID already exists.")
-    student = {
-        "account_id": f"student_{uuid.uuid4().hex[:16]}",
-        "full_name": normalize_display_name(request.full_name),
-        "student_id": student_id,
-        "date_of_birth": normalize_date(request.date_of_birth),
-        "other_info": {
-            str(key)[:50]: str(value)[:250]
-            for key, value in request.other_info.items()
-        },
-        "active": True,
+    join_request = manager.create_guest_join_request(request.full_name)
+    public_request = {
+        "id": join_request["id"],
+        "full_name": join_request["full_name"],
+        "status": join_request["status"],
+        "requested_at": join_request["requested_at"],
     }
-    manager.students.append(student)
-    manager.save_students()
-    await manager.broadcast(
-        {"type": "student_records_updated", "students": manager.public_students()}
+    await manager.send_to_role(
+        "admin",
+        {
+            "type": "join_request_created",
+            "request": public_request,
+            "pending_count": len(manager.public_join_requests()),
+        },
     )
-    return {"status": "success", "student": student}
+    return {
+        "request_id": join_request["id"],
+        "request_token": join_request["request_token"],
+        "status": join_request["status"],
+        "full_name": join_request["full_name"],
+    }
 
 
-@app.delete("/api/students/{account_id}")
-async def remove_student(
+@app.get("/api/guest-requests/{request_id}/status")
+async def get_guest_request_status(
+    request_id: str,
+    request_token: str,
+) -> Dict[str, Any]:
+    return manager.get_guest_join_status(request_id, request_token)
+
+
+@app.get("/api/join-requests")
+async def get_join_requests(
+    authorization: Optional[str] = Header(default=None),
+) -> Dict[str, Any]:
+    require_session(authorization, role="admin")
+    requests = manager.public_join_requests()
+    return {"requests": requests, "pending_count": len(requests)}
+
+
+@app.post("/api/join-requests/{request_id}/approve")
+async def approve_join_request(
+    request_id: str,
+    authorization: Optional[str] = Header(default=None),
+) -> Dict[str, Any]:
+    require_session(authorization, role="admin")
+    request = manager.approve_guest_join_request(request_id)
+    await manager.send_to_role(
+        "admin",
+        {
+            "type": "join_requests_updated",
+            "pending_count": len(manager.public_join_requests()),
+        },
+    )
+    await manager.broadcast(
+        {
+            "type": "guest_records_updated",
+            "guests": manager.public_guests(),
+        }
+    )
+    return {
+        "status": "success",
+        "request": {
+            "id": request["id"],
+            "full_name": request["full_name"],
+            "status": request["status"],
+        },
+    }
+
+
+@app.post("/api/join-requests/{request_id}/reject")
+async def reject_join_request(
+    request_id: str,
+    authorization: Optional[str] = Header(default=None),
+) -> Dict[str, Any]:
+    require_session(authorization, role="admin")
+    request = manager.reject_guest_join_request(request_id)
+    await manager.send_to_role(
+        "admin",
+        {
+            "type": "join_requests_updated",
+            "pending_count": len(manager.public_join_requests()),
+        },
+    )
+    return {
+        "status": "success",
+        "request": {
+            "id": request["id"],
+            "full_name": request["full_name"],
+            "status": request["status"],
+        },
+    }
+
+
+@app.get("/api/guests")
+async def get_guests(
+    authorization: Optional[str] = Header(default=None),
+) -> Dict[str, Any]:
+    require_session(authorization, role="admin")
+    return {"guests": manager.public_guests()}
+
+
+@app.delete("/api/guests/{account_id}")
+async def remove_guest(
     account_id: str,
     authorization: Optional[str] = Header(default=None),
 ) -> Dict[str, str]:
     require_session(authorization, role="admin")
-    student = manager.get_student(account_id)
-    if not student:
-        raise HTTPException(status_code=404, detail="Student not found.")
+    guest = manager.get_guest(account_id)
+    if not guest:
+        raise HTTPException(status_code=404, detail="Guest not found.")
     await manager.kick_account(account_id)
-    manager.students = [
-        item for item in manager.students if item["account_id"] != account_id
+    manager.guests = [
+        item for item in manager.guests if item["account_id"] != account_id
     ]
     manager.access_control.get("owner_grants", {}).pop(account_id, None)
     for grants in manager.access_control.get("owner_grants", {}).values():
@@ -977,12 +1217,12 @@ async def remove_student(
         for item in manager.access_control.get("global_editors", [])
         if item != account_id
     ]
-    manager.save_students()
+    manager.save_guests()
     manager.save_access()
     await manager.broadcast(
         {
-            "type": "student_records_updated",
-            "students": manager.public_students(),
+            "type": "guest_records_updated",
+            "guests": manager.public_guests(),
             "active_users": manager.get_active_users(),
         }
     )
@@ -1014,7 +1254,7 @@ async def get_access_settings(
     authorization: Optional[str] = Header(default=None),
 ) -> Dict[str, Any]:
     session = require_session(authorization)
-    users = manager.public_students()
+    users = manager.public_guests()
     if session["role"] == "admin":
         enabled_ids = set(manager.access_control.get("global_editors", []))
         return {
@@ -1061,10 +1301,10 @@ async def update_owner_access(
     authorization: Optional[str] = Header(default=None),
 ) -> Dict[str, str]:
     session = require_session(authorization)
-    if session["role"] != "student":
-        raise HTTPException(status_code=403, detail="Student access setting required.")
-    if not manager.get_student(grantee_account_id):
-        raise HTTPException(status_code=404, detail="Student not found.")
+    if session["role"] != "guest":
+        raise HTTPException(status_code=403, detail="Guest access setting required.")
+    if not manager.get_guest(grantee_account_id):
+        raise HTTPException(status_code=404, detail="Guest not found.")
     grants = manager.access_control.setdefault("owner_grants", {}).setdefault(
         session["account_id"],
         [],
@@ -1078,20 +1318,20 @@ async def update_owner_access(
     return {"status": "success"}
 
 
-@app.put("/api/access/global/{student_account_id}")
+@app.put("/api/access/global/{guest_account_id}")
 async def update_global_access(
-    student_account_id: str,
+    guest_account_id: str,
     request: ToggleRequest,
     authorization: Optional[str] = Header(default=None),
 ) -> Dict[str, str]:
     require_session(authorization, role="admin")
-    if not manager.get_student(student_account_id):
-        raise HTTPException(status_code=404, detail="Student not found.")
+    if not manager.get_guest(guest_account_id):
+        raise HTTPException(status_code=404, detail="Guest not found.")
     global_editors = manager.access_control.setdefault("global_editors", [])
-    if request.enabled and student_account_id not in global_editors:
-        global_editors.append(student_account_id)
-    if not request.enabled and student_account_id in global_editors:
-        global_editors.remove(student_account_id)
+    if request.enabled and guest_account_id not in global_editors:
+        global_editors.append(guest_account_id)
+    if not request.enabled and guest_account_id in global_editors:
+        global_editors.remove(guest_account_id)
     manager.save_access()
     await manager.broadcast({"type": "access_updated"})
     return {"status": "success"}
@@ -1123,6 +1363,143 @@ async def update_tab_limit(
         }
     )
     return {"status": "success", "tab_limit": request.tab_limit}
+
+
+PYTHON_PROBLEM_EXPLANATIONS = {
+    "SyntaxError": "Python could not understand the statement. Check punctuation, brackets, and the structure near this line.",
+    "IndentationError": "The indentation level is invalid. Align this line with the block it belongs to.",
+    "TabError": "Tabs and spaces are mixed inconsistently. Use one indentation style throughout the block.",
+    "NameError": "A name is being used before Python can find a matching variable, function, or import.",
+    "TypeError": "An operation received a value of the wrong type or an unsupported combination of types.",
+    "ValueError": "The value has the correct general type, but its content is not valid for this operation.",
+    "ZeroDivisionError": "The code attempted to divide by zero. Check the divisor before performing the calculation.",
+    "IndexError": "A list, tuple, or string position is outside the available range.",
+    "KeyError": "The requested dictionary key does not exist.",
+    "AttributeError": "This value does not provide the requested attribute or method.",
+    "ImportError": "Python could not import the requested name or module.",
+    "ModuleNotFoundError": "The requested Python module is not installed or cannot be found.",
+    "RecursionError": "The function called itself too many times without reaching a stopping condition.",
+    "AssertionError": "An assertion condition evaluated to false.",
+}
+
+
+def explain_cpp_problem(message: str, severity: str) -> str:
+    lowered = message.lower()
+    if "was not declared" in lowered or "undeclared identifier" in lowered:
+        return "This name is not declared in the current scope. Check its spelling and declaration."
+    if "expected" in lowered:
+        return "The compiler expected another token or statement here. Check nearby brackets, semicolons, and syntax."
+    if "no matching function" in lowered:
+        return "No available function accepts the arguments used in this call."
+    if "invalid conversion" in lowered or "cannot convert" in lowered:
+        return "The value cannot be converted to the required type without changing the code."
+    if "redefinition" in lowered:
+        return "This name or function has already been defined in the same scope."
+    if "missing terminating" in lowered:
+        return "A string or character literal is missing its closing quotation mark."
+    if severity == "warning":
+        return "The program can compile, but this line may cause unexpected behaviour."
+    if severity == "note":
+        return "The compiler included this related location to explain another problem."
+    return "The C++ compiler rejected this statement. Review the message and the code around this location."
+
+
+def parse_execution_problems(
+    result: Dict[str, Any],
+    language: str,
+) -> List[Dict[str, Any]]:
+    stderr = str(result.get("stderr") or "")
+    returncode = int(result.get("returncode") or 0)
+    stage = str(result.get("stage") or "run")
+    if not stderr and returncode == 0:
+        return []
+
+    if language == "cpp":
+        problems: List[Dict[str, Any]] = []
+        pattern = re.compile(
+            r"^.*?:(\d+):(\d+):\s*(fatal error|error|warning|note):\s*(.+)$",
+            re.IGNORECASE,
+        )
+        for raw_line in stderr.splitlines():
+            match = pattern.match(raw_line.strip())
+            if not match:
+                continue
+            severity_text = match.group(3).lower()
+            severity = (
+                "error"
+                if severity_text in {"error", "fatal error"}
+                else severity_text
+            )
+            message = match.group(4).strip()
+            problems.append(
+                {
+                    "line": int(match.group(1)),
+                    "column": int(match.group(2)),
+                    "severity": severity,
+                    "type": "C++ Compiler Error" if severity == "error" else f"C++ {severity.title()}",
+                    "message": message,
+                    "explanation": explain_cpp_problem(message, severity),
+                }
+            )
+        if problems:
+            return problems
+        if stderr or returncode != 0:
+            message = stderr.strip() or f"Program exited with code {returncode}."
+            return [
+                {
+                    "line": None,
+                    "column": None,
+                    "severity": "error",
+                    "type": "C++ Compiler Error" if stage == "compile" else "C++ Runtime Error",
+                    "message": message,
+                    "explanation": (
+                        "The compiler could not run in this environment."
+                        if "compiler not found" in message.lower()
+                        else "The program failed without a source location. Check the Terminal output for the complete details."
+                    ),
+                }
+            ]
+        return []
+
+    traceback_lines = stderr.splitlines()
+    source_line = None
+    column = None
+    for index, raw_line in enumerate(traceback_lines):
+        match = re.search(r'File "<string>", line (\d+)', raw_line)
+        if not match:
+            continue
+        source_line = int(match.group(1))
+        if index + 2 < len(traceback_lines):
+            caret_line = traceback_lines[index + 2]
+            caret_position = caret_line.find("^")
+            if caret_position >= 0:
+                column = max(1, caret_position - 3)
+
+    problem_type = "Python Runtime Error"
+    message = stderr.strip() or f"Program exited with code {returncode}."
+    for raw_line in reversed(traceback_lines):
+        match = re.match(
+            r"^([A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception))(?::\s*(.*))?$",
+            raw_line.strip(),
+        )
+        if match:
+            problem_type = match.group(1)
+            message = match.group(2) or match.group(1)
+            break
+
+    return [
+        {
+            "line": source_line,
+            "column": column,
+            "severity": "error",
+            "type": problem_type,
+            "message": message,
+            "explanation": PYTHON_PROBLEM_EXPLANATIONS.get(
+                problem_type,
+                "Python stopped while running this code. Check the marked line and the Terminal traceback for context.",
+            ),
+        }
+    ]
 
 
 def run_python(code: str, stdin: str, timeout: float) -> Dict[str, Any]:
@@ -1222,9 +1599,10 @@ async def run_code(
                 "timed_out": False,
             }
         )
+        result["problems"] = parse_execution_problems(result, request.language)
         return result
     except subprocess.TimeoutExpired:
-        return {
+        result = {
             "stdout": "",
             "stderr": f"Execution timed out after {timeout} seconds.",
             "returncode": -1,
@@ -1232,6 +1610,8 @@ async def run_code(
             "timed_out": True,
             "stage": "run",
         }
+        result["problems"] = parse_execution_problems(result, request.language)
+        return result
 
 
 @app.get("/api/snapshots")
@@ -1278,7 +1658,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str) -> None:
                 "palette": COLOR_PALETTE,
                 "claimed_colors": manager.get_claimed_colors(),
                 "active_users": manager.get_active_users(),
-                "students": manager.public_students(),
+                "guests": manager.public_guests(),
             }
         )
 
@@ -1304,7 +1684,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str) -> None:
                     )
                     continue
                 if (
-                    session["role"] == "student"
+                    session["role"] == "guest"
                     and manager.is_account_connected(
                         session["account_id"],
                         exclude_connection_id=client_id,
@@ -1313,7 +1693,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str) -> None:
                     await websocket.send_json(
                         {
                             "type": "auth_error",
-                            "message": "This student already has an active session.",
+                            "message": "This Guest already has an active session.",
                         }
                     )
                     continue
@@ -1350,7 +1730,12 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str) -> None:
                             "color": user["color"],
                         },
                         "messages": manager.get_chat_history_for_user(user["account_id"]),
-                        "students": manager.public_students(),
+                        "guests": manager.public_guests(),
+                        "join_request_count": (
+                            len(manager.public_join_requests())
+                            if user["role"] == "admin"
+                            else 0
+                        ),
                     }
                 )
                 await manager.broadcast(
@@ -1358,7 +1743,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str) -> None:
                         "type": "presence_updated",
                         "active_users": manager.get_active_users(),
                         "claimed_colors": manager.get_claimed_colors(),
-                        "students": manager.public_students(),
+                        "guests": manager.public_guests(),
                     }
                 )
                 continue
@@ -1411,6 +1796,21 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str) -> None:
                         text_lines,
                         user,
                     )
+                client_sequence = data.get("client_sequence")
+                if not isinstance(client_sequence, int) or isinstance(
+                    client_sequence,
+                    bool,
+                ):
+                    client_sequence = None
+                await websocket.send_json(
+                    {
+                        "type": "code_delta_ack",
+                        "file_id": file_id,
+                        "revision": file_data["revision"],
+                        "line_authors": manager.line_authors.get(file_id, {}),
+                        "client_sequence": client_sequence,
+                    }
+                )
                 await manager.broadcast(
                     {
                         "type": "code_delta",
@@ -1652,7 +2052,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str) -> None:
                     "type": "presence_updated",
                     "active_users": manager.get_active_users(),
                     "claimed_colors": manager.get_claimed_colors(),
-                    "students": manager.public_students(),
+                    "guests": manager.public_guests(),
                 }
             )
 

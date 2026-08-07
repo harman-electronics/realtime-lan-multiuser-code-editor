@@ -1,48 +1,48 @@
 # Real-Time LAN Multiuser Code Editor
 
-A real-time LAN code editor for Python and C++ with registered accounts,
-collaborative editing, line ownership, access controls, messaging, personalized
-appearance, snapshots, and server-side code execution.
+A real-time LAN code editor for Python and C++ with collaborative editing,
+line ownership, Admin-approved Guest access, chat, appearance controls, and
+host-side code execution. Changes, presence, messages, permissions, and file
+updates are synchronized for connected users in real time.
 
-## Version 3.0 — Major Interface and Appearance Update
+## Version 4.0 — Guest Approval and Final Collaboration Workflow
 
-Version 3.0 introduces a full-screen adjustable workspace, redesigned light and
-dark themes, per-PC wallpapers, Fill/Fit layouts, adaptive colours, a blurred
-ambient background, and improved message management.
+Version 4.0 replaces pre-registered Student login with a live Guest join-request
+workflow. A Guest enters a name, the Admin receives a notification, and the
+request can be accepted or rejected from Admin Settings. This release also
+raises the configurable file-tab maximum to 15 and includes every approved
+workspace, messaging, execution, and appearance improvement from earlier
+versions. It fixes consecutive-line ownership so a Guest can repeatedly press
+Enter beneath another user's code and continue editing every new line they
+create, while all connected clients show the same owner.
 
-For the complete release history, detailed changes, security guidance, privacy
-information, and known limitations, read the [changelog](CHANGELOG.md).
+Read the [changelog](CHANGELOG.md) for the complete feature history, detailed
+changes, security notes, and previous releases.
 
 > [!WARNING]
-> **Use Version 3.0 only on a trusted host computer and trusted local network.**
-> It is intended for a small class, lab, or study group working together with
-> or without a lecturer. Do not expose it to the public internet or publish a
-> populated `data` folder. Names, Student IDs, dates of birth, code, chats,
-> snapshots, ownership records, and permissions are stored locally as readable
-> JSON on the host computer. Never publish real class data.
-
-Registered students must be added by the lecturer acting as Admin, or by a
-trusted Admin in an independent study group. Students can enter only when their
-Student ID, date of birth, and password match an active record.
+> **Use this project only on a trusted host computer and trusted local network.**
+> It is intended for a class, lab, or small group working together with or
+> without a lecturer. Do not expose the development server to the public
+> internet or publish a populated `data` folder. Guest names, code, chats,
+> snapshots, ownership, and permissions are stored locally as readable JSON.
 
 > [!IMPORTANT]
-> This is a university-friendly prototype, not official university identity
-> authentication. It is not connected to institutional SSO, Active Directory,
-> or a protected student database. Individual password hashing, encrypted
-> storage, HTTPS, a database, stronger execution isolation, and institutional
-> authentication are required before production or campus-wide use.
+> This is a collaborative prototype, not production authentication. It does
+> not provide HTTPS, university SSO, encrypted storage, or a complete code-
+> execution sandbox. Every person allowed to run code on the host must be
+> trusted.
 
 ### Default light theme
 
-![Version 3.0 default light theme](docs/images/version-3.0-default-light.png)
+![Version 4.0 default light theme](docs/images/version-4.0-default-light.png)
 
 ### Default dark theme
 
-![Version 3.0 default dark theme](docs/images/version-3.0-default-dark.png)
+![Version 4.0 default dark theme](docs/images/version-4.0-default-dark.png)
 
 ### Dark theme with a fitted wallpaper
 
-![Version 3.0 dark theme with fitted wallpaper](docs/images/version-3.0-wallpaper-dark-fit.png)
+![Version 4.0 dark theme with fitted wallpaper](docs/images/version-4.0-wallpaper-dark-fit.png)
 
 The wallpaper example uses **Fit**, **5% background dimming**, **98% wallpaper
 visibility**, and **2px panel blur**. Wallpaper images and appearance settings
@@ -50,15 +50,16 @@ are saved only in the current browser on that PC and are not synchronized.
 
 ## Main features
 
-- Admin-managed student records and one active session per student
+- Live Admin approval or rejection of Guest join requests
 - Real-time multi-file Python and C++ collaboration over a LAN
 - Persistent line ownership, blank-line claiming, and code-access permissions
-- Python and C++ execution with per-file Program Input (`stdin`)
-- Live presence, collaborative cursors, and restorable code snapshots
-- Group Chat and Direct Messages with editing, deletion, and unread alerts
-- Adjustable workspace, terminal, chat, and Admin Settings panels
-- Light, dark, and automatic themes with locally saved wallpapers
-- Fill/Fit wallpaper layouts, adaptive colours, and ambient backgrounds
+- Up to 15 Admin-configurable file tabs with per-file Program Input (`stdin`)
+- Python and C++ execution, detailed errors, and restorable code snapshots
+- Group Chat and Direct Messages with unread alerts, editing, and deletion
+- One active session per approved Guest and Admin removal controls
+- Adjustable full-screen workspace, terminal, chat, and Admin Settings panels
+- Light, dark, and automatic themes with local wallpapers, Fill/Fit, adaptive
+  colours, panel blur, dimming, visibility, and ambient backgrounds
 - LAN address and QR-code sharing for trusted devices
 
 ## Quick start
@@ -91,175 +92,117 @@ python -m pip install -r requirements.txt
 python app.py
 ```
 
-Open `http://localhost:8000` on the host computer. Other trusted devices on the
-same LAN can use the Wi-Fi address shown in CMD or scan the displayed QR code.
+Open `http://localhost:8000` on the host. Trusted devices on the same LAN can
+open the Wi-Fi address shown in CMD or scan the displayed QR code.
 
-## Demonstration accounts
+## Demonstration login
 
-Use only these fictional demonstration records.
+1. Select **Admin**, enter password `12345`, and log in.
+2. On another browser or device, select **Guest**, enter a fictional full name
+   such as `Bob`, choose a cursor colour, and send the request.
+3. The Admin receives `Bob wants to join`. Open the notification or go to
+   **Admin Settings → Join Requests**, then select **Accept** or **Reject**.
+4. An accepted Guest enters automatically. Their approved identity is retained
+   for future requests, and the Admin can remove it from Settings.
 
-| Role/User | Student ID | Date of birth | Password |
-|---|---|---|---|
-| Admin | — | — | `12345` |
-| John Smith | `ST001` | `15/06/2005` (`2005-06-15` in the login field) | `test1` |
-| Bob | `ST002` | `01/01/2005` (`2005-01-01` in the login field) | `test1` |
+Only one active connection is allowed for each approved Guest identity.
 
-These passwords are temporary. Change them before using the project with a
-private group.
+### Change the Admin password
 
-### Change the testing passwords
-
-Set different passwords in the same CMD window before starting the server:
+Set a private password in the same CMD window before starting the server:
 
 ```cmd
 set "LIVE_EDITOR_ADMIN_PASSWORD=choose-a-new-admin-password"
-set "LIVE_EDITOR_STUDENT_PASSWORD=choose-a-new-shared-student-password"
 python app.py
 ```
 
-The Student password remains shared by all registered students in Version 3.0.
+This is safer than editing the default value in `app.py` and avoids committing
+a personal password to GitHub.
 
 ## Program Input (`stdin`)
 
-Enter input in the **Program Input (stdin)** box before running a file. Input is
-limited to 20,000 characters and saved separately for each file in the current
-browser. It is not synchronized with other participants.
+Enter input in **Program Input (stdin)** before running a file. It is limited to
+20,000 characters, saved separately for each file in the current browser, and
+not synchronized with other participants.
 
-### Python input
-
-For separate Python `input()` calls, only the one-value-per-line format works:
+For separate Python `input()` calls, enter one value per line:
 
 ```text
 10
 5
 ```
 
-Entering `10 5` on one line gives the first `input()` call the complete text
-`10 5`, so converting it directly with `int()` fails.
+Entering `10 5` on one line gives the first Python `input()` call the complete
+text. C++ `std::cin` accepts either `10 5` on one line or values on separate
+lines.
 
-### C++ input
+## C++ compiler and libraries
 
-C++ `std::cin` accepts either:
-
-```text
-10 5
-```
-
-or:
-
-```text
-10
-5
-```
-
-## C++ compiler
-
-C++ compilation happens on the host computer. Connected participants do not
-need their own compiler.
-
-Version 3.0 searches for `g++`, then `clang++`, then a compatible executable
-provided through `LIVE_EDITOR_CPP_COMPILER`. Check the host from CMD:
+C++ compilation happens on the host; connected users do not need their own
+compiler. The runner searches for `g++`, then `clang++`, and uses C++17. It was
+tested with `g++`. Check the host from CMD:
 
 ```cmd
 g++ --version
 clang++ --version
 ```
 
-To provide a compiler path manually:
+To configure a compatible compiler executable manually:
 
 ```cmd
 set "LIVE_EDITOR_CPP_COMPILER=C:\path\to\g++.exe"
 python app.py
 ```
 
-The project was tested successfully with `g++` using C++17. Microsoft `cl.exe`
-is not currently supported because it uses different command options.
-
-### C++ libraries
-
-Standard C++ headers work with the configured compiler, including:
-
-```cpp
-#include <iostream>
-#include <vector>
-#include <algorithm>
-#include <string>
-```
+Microsoft `cl.exe` is not currently supported because it requires different
+command options. Standard headers such as `<iostream>`, `<vector>`,
+`<algorithm>`, and `<string>` work with the configured compiler.
 
 > [!IMPORTANT]
-> Third-party C++ libraries are not automatically supported when they require
-> additional include paths, library paths, linker flags, or multi-file builds.
-> The current runner compiles one source file using fixed GCC/Clang-style C++17
-> options.
+> Third-party C++ libraries that need extra include paths, library paths,
+> linker flags, or multi-file builds are not automatically supported. The
+> current runner compiles one source file with fixed GCC/Clang-style options.
 
 ## Python libraries
 
-Standard-library modules such as `math`, `json`, `statistics`, and `collections`
-work automatically. Install trusted third-party packages into the same Python
-environment used to start the server:
+Standard-library imports work automatically. Install a trusted third-party
+package into the same Python environment used to run the server:
 
 ```cmd
 python -m pip install package-name
 python app.py
 ```
 
-For example:
-
-```cmd
-python -m pip install humanize
-```
-
-Version 3.0 successfully imported `humanize 4.16.0` through the authenticated
-runner during testing.
-
-Important library behaviour:
-
-- Stop the server with `Ctrl+C` before changing its Python environment.
-- Install packages only from the host CMD, never from student code.
-- Separate Python tabs cannot currently import one another.
-- Packages installed only with `--user` may not be visible; use the activated
-  virtual environment.
-- GUI, hardware-specific, and operating-system-dependent packages may require
-  additional host configuration.
+Installed packages were verified through the authenticated runner. Separate
+Python workspace tabs cannot currently import one another. GUI, hardware, and
+operating-system-specific packages may need additional host configuration.
 
 ## Testing
 
-Version 3.0 passed:
-
-- **12/12 permanent automated tests**
-- **12/12 Python/C++ execution-matrix tests**
-- Real C++17 compilation and execution using `g++`
-- Third-party Python package installation and import testing
-- Browser tests covering login, execution, settings, and both themes
-
-Run the isolated tests:
+Version 4.0 passed **17/17 permanent automated tests** and **12/12 Python/C++
+execution-matrix tests**, including Guest approval, permissions, messaging,
+input, imports, loops, functions, recursion, classes, errors, timeouts, Unicode,
+and real C++17 STL compilation.
 
 ```cmd
 python test_app.py
 python test_execution_matrix.py
 ```
 
-The test suites use temporary data and do not modify the committed demonstration
-records.
+Both suites use isolated temporary data and do not modify committed records.
 
-## Stopping and upgrading
+## Stopping, upgrading, and mobile access
 
-Stop the server safely by returning to CMD and pressing `Ctrl+C`. Code, messages,
-snapshots, records, ownership, and permissions are normally saved when each
-change occurs. Connections, cursor positions, selections, typing indicators,
-and login sessions are temporary.
+Stop the server by returning to CMD and pressing `Ctrl+C`. Persistent changes
+are normally saved when they happen; live connections, cursors, typing state,
+and login sessions end when the server stops.
 
-After replacing project files, restart the server and hard-refresh the browser:
-
-- Windows or Linux: `Ctrl+F5`
-- macOS: `Cmd+Shift+R`
-
-## Mobile access
+After upgrading, restart the server and hard-refresh the browser with `Ctrl+F5`
+(Windows/Linux) or `Cmd+Shift+R` (macOS).
 
 Phones on the same trusted Wi-Fi can use the LAN address or QR code. Do not use
-`localhost` on a phone because it refers to the phone itself. Mobile support is
-experimental; landscape orientation and **Desktop site** mode may provide a
-better layout.
+`localhost` on a phone. Mobile support remains experimental; landscape
+orientation and **Desktop site** mode usually provide a better layout.
 
 ## Project structure
 
@@ -269,22 +212,10 @@ better layout.
 ├── requirements.txt
 ├── test_app.py
 ├── test_execution_matrix.py
-├── data/
-│   ├── students.json
-│   ├── workspace_state.json
-│   ├── file_line_authors.json
-│   ├── access_control.json
-│   ├── chat_history.json
-│   ├── snapshots.json
-│   ├── code_state.json
-│   └── line_authors.json
+├── data/                    # Local JSON workspace and collaboration state
 ├── docs/
-│   └── images/
-└── static/
-    ├── app.js
-    ├── index.html
-    ├── style.css
-    └── icons/
+│   └── images/             # Release screenshots
+└── static/                 # HTML, CSS, JavaScript, and icons
 ```
 
 ## Technology
@@ -295,8 +226,8 @@ Lucide icons, QRCode, Pillow, and a supported C++ compiler.
 ## Credits
 
 The project began as a Rapid Application Development demonstration. Its
-features developed through classroom discussion, feedback, implementation, and
-repeated testing.
+features developed through classroom discussion, feedback, implementation,
+and repeated testing.
 
 ## Licence
 

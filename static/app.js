@@ -13,7 +13,10 @@ const state = {
   activeFileId: null,
   lineAuthors: {},
   activeUsers: [],
-  students: [],
+  guests: [],
+  joinRequests: [],
+  joinRequestCount: 0,
+  joinRequestPollTimer: null,
   editableOwnerIds: new Set(),
   globalEditor: false,
   editor: null,
@@ -26,6 +29,8 @@ const state = {
   currentChatTab: 'group',
   activeDmAccountId: null,
   unreadCount: 0,
+  deltaSequence: 0,
+  latestLocalSequenceByFile: {},
 };
 
 const $ = (id) => document.getElementById(id);
@@ -50,15 +55,14 @@ const elements = {
   loginRoleSelection: $('loginRoleSelection'),
   loginSubtitle: $('loginSubtitle'),
   btnChooseAdmin: $('btnChooseAdmin'),
-  btnChooseStudent: $('btnChooseStudent'),
+  btnChooseGuest: $('btnChooseGuest'),
   frmAdminLogin: $('frmAdminLogin'),
-  frmStudentLogin: $('frmStudentLogin'),
+  frmGuestLogin: $('frmGuestLogin'),
   btnBackFromAdmin: $('btnBackFromAdmin'),
-  btnBackFromStudent: $('btnBackFromStudent'),
+  btnBackFromGuest: $('btnBackFromGuest'),
   txtAdminPassword: $('txtAdminPassword'),
-  txtStudentIdLogin: $('txtStudentIdLogin'),
-  txtStudentDobLogin: $('txtStudentDobLogin'),
-  txtStudentPassword: $('txtStudentPassword'),
+  txtGuestName: $('txtGuestName'),
+  btnRequestGuestJoin: $('btnRequestGuestJoin'),
   loginColorSection: $('loginColorSection'),
   colorGrid: $('colorGrid'),
   loginMessage: $('loginMessage'),
@@ -67,6 +71,8 @@ const elements = {
   myUsername: $('myUsername'),
   myAdminCrown: $('myAdminCrown'),
   btnLogout: $('btnLogout'),
+  btnJoinRequestNotifications: $('btnJoinRequestNotifications'),
+  joinRequestNotificationCount: $('joinRequestNotificationCount'),
   presenceBar: $('presenceBar'),
   avatarGroup: $('avatarGroup'),
   wsStatus: $('wsStatus'),
@@ -97,21 +103,19 @@ const elements = {
   txtAdminDisplayName: $('txtAdminDisplayName'),
   btnSaveAdminName: $('btnSaveAdminName'),
   adminNameMessage: $('adminNameMessage'),
-  frmAddStudent: $('frmAddStudent'),
-  txtNewStudentName: $('txtNewStudentName'),
-  txtNewStudentId: $('txtNewStudentId'),
-  txtNewStudentDob: $('txtNewStudentDob'),
-  txtNewStudentInfo: $('txtNewStudentInfo'),
-  studentRecordMessage: $('studentRecordMessage'),
-  studentRecordsList: $('studentRecordsList'),
+  joinRequestsSection: $('joinRequestsSection'),
+  joinRequestsSettingsCount: $('joinRequestsSettingsCount'),
+  joinRequestsList: $('joinRequestsList'),
+  guestRecordMessage: $('guestRecordMessage'),
+  guestRecordsList: $('guestRecordsList'),
   numTabLimit: $('numTabLimit'),
   btnSaveTabLimit: $('btnSaveTabLimit'),
   tabLimitMessage: $('tabLimitMessage'),
   adminGlobalAccessList: $('adminGlobalAccessList'),
-  dlgStudentSettings: $('dlgStudentSettings'),
-  btnCloseStudentSettings: $('btnCloseStudentSettings'),
-  btnStudentAppearance: $('btnStudentAppearance'),
-  studentCodeAccessList: $('studentCodeAccessList'),
+  dlgGuestSettings: $('dlgGuestSettings'),
+  btnCloseGuestSettings: $('btnCloseGuestSettings'),
+  btnGuestAppearance: $('btnGuestAppearance'),
+  guestCodeAccessList: $('guestCodeAccessList'),
   dlgAppearance: $('dlgAppearance'),
   btnBackAppearance: $('btnBackAppearance'),
   btnCloseAppearance: $('btnCloseAppearance'),
@@ -179,6 +183,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   initializeWebSocket();
   await fetchAppInfo();
   await restoreSession();
+  restorePendingGuestRequest();
 });
 
 function setTheme(theme) {
@@ -778,7 +783,15 @@ function initializeEditor() {
     if (!activeFile) return;
 
     let currentChange = change;
+    let optimisticCode = activeFile.code || '';
     while (currentChange) {
+      optimisticCode = applyLocalAuthorDelta(
+        activeFile.id,
+        currentChange,
+        optimisticCode,
+      );
+      state.deltaSequence += 1;
+      state.latestLocalSequenceByFile[activeFile.id] = state.deltaSequence;
       sendWsMessage({
         type: 'code_delta',
         file_id: activeFile.id,
@@ -786,6 +799,7 @@ function initializeEditor() {
         to: currentChange.to,
         text: currentChange.text,
         revision: activeFile.revision,
+        client_sequence: state.deltaSequence,
       });
       currentChange = currentChange.next;
     }
@@ -905,7 +919,7 @@ function showLoginDialog() {
 function resetLoginChoice() {
   elements.loginRoleSelection.style.display = 'grid';
   elements.frmAdminLogin.style.display = 'none';
-  elements.frmStudentLogin.style.display = 'none';
+  elements.frmGuestLogin.style.display = 'none';
   elements.loginColorSection.style.display = 'none';
   elements.loginSubtitle.textContent = 'Choose how you want to sign in.';
   setMessage(elements.loginMessage, '');
@@ -914,15 +928,15 @@ function resetLoginChoice() {
 function selectLoginRole(role) {
   elements.loginRoleSelection.style.display = 'none';
   elements.frmAdminLogin.style.display = role === 'admin' ? 'block' : 'none';
-  elements.frmStudentLogin.style.display = role === 'student' ? 'block' : 'none';
+  elements.frmGuestLogin.style.display = role === 'guest' ? 'block' : 'none';
   elements.loginColorSection.style.display = 'block';
   elements.loginSubtitle.textContent = role === 'admin'
     ? 'Enter the Admin password and choose a cursor color.'
-    : 'Enter your saved student details. Your name will be loaded automatically.';
+    : 'Enter your name. The Admin must approve your request before you can join.';
   setMessage(elements.loginMessage, '');
   renderColorGrid();
   if (role === 'admin') elements.txtAdminPassword.focus();
-  else elements.txtStudentIdLogin.focus();
+  else elements.txtGuestName.focus();
 }
 
 function chooseAvailableColor() {
@@ -988,6 +1002,114 @@ async function submitLogin(role, credentials) {
   }
 }
 
+const PENDING_GUEST_REQUEST_KEY = 'live_editor_pending_guest_request';
+
+function setGuestWaitingState(waiting, name = '') {
+  elements.btnRequestGuestJoin.disabled = waiting;
+  elements.txtGuestName.disabled = waiting;
+  if (waiting) {
+    setMessage(
+      elements.loginMessage,
+      `${name} wants to join. Waiting for Admin approval...`,
+      'success',
+    );
+    elements.loginMessage.classList.add('guest-waiting-message');
+  }
+}
+
+function clearPendingGuestRequest() {
+  if (state.joinRequestPollTimer) {
+    clearTimeout(state.joinRequestPollTimer);
+    state.joinRequestPollTimer = null;
+  }
+  sessionStorage.removeItem(PENDING_GUEST_REQUEST_KEY);
+  elements.btnRequestGuestJoin.disabled = false;
+  elements.txtGuestName.disabled = false;
+}
+
+async function requestGuestJoin(fullName) {
+  if (!state.color) {
+    setMessage(elements.loginMessage, 'Choose a cursor color.', 'error');
+    return;
+  }
+  elements.btnRequestGuestJoin.disabled = true;
+  setMessage(elements.loginMessage, 'Sending your request to the Admin...', 'success');
+  try {
+    const response = await fetch('/api/guest-requests', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ full_name: fullName }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || 'Unable to send the join request.');
+    const pending = {
+      requestId: data.request_id,
+      requestToken: data.request_token,
+      fullName: data.full_name,
+    };
+    sessionStorage.setItem(PENDING_GUEST_REQUEST_KEY, JSON.stringify(pending));
+    setGuestWaitingState(true, pending.fullName);
+    pollGuestJoinRequest(pending);
+  } catch (error) {
+    elements.btnRequestGuestJoin.disabled = false;
+    setMessage(elements.loginMessage, error.message, 'error');
+  }
+}
+
+async function pollGuestJoinRequest(pending) {
+  if (!pending?.requestId || !pending?.requestToken || state.authToken) return;
+  try {
+    const params = new URLSearchParams({ request_token: pending.requestToken });
+    const response = await fetch(
+      `/api/guest-requests/${encodeURIComponent(pending.requestId)}/status?${params}`,
+    );
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || 'Unable to check the join request.');
+    if (data.status === 'approved' && data.token && data.user) {
+      clearPendingGuestRequest();
+      completeAuthentication(data, 'Request approved. Joining the live editor...');
+      return;
+    }
+    if (data.status === 'rejected') {
+      clearPendingGuestRequest();
+      setMessage(elements.loginMessage, 'The Admin rejected your join request.', 'error');
+      return;
+    }
+    if (data.status === 'expired') {
+      clearPendingGuestRequest();
+      setMessage(elements.loginMessage, 'Your join request expired. Please send a new one.', 'error');
+      return;
+    }
+    setGuestWaitingState(true, pending.fullName);
+    state.joinRequestPollTimer = setTimeout(
+      () => pollGuestJoinRequest(pending),
+      1500,
+    );
+  } catch (error) {
+    setMessage(elements.loginMessage, error.message, 'error');
+    elements.loginMessage.classList.add('guest-waiting-message');
+    state.joinRequestPollTimer = setTimeout(
+      () => pollGuestJoinRequest(pending),
+      2500,
+    );
+  }
+}
+
+function restorePendingGuestRequest() {
+  if (state.authToken) return;
+  let pending = null;
+  try {
+    pending = JSON.parse(sessionStorage.getItem(PENDING_GUEST_REQUEST_KEY) || 'null');
+  } catch {
+    sessionStorage.removeItem(PENDING_GUEST_REQUEST_KEY);
+  }
+  if (!pending?.requestId || !pending?.requestToken) return;
+  selectLoginRole('guest');
+  elements.txtGuestName.value = pending.fullName || '';
+  setGuestWaitingState(true, pending.fullName || 'Guest');
+  pollGuestJoinRequest(pending);
+}
+
 function updateSignedInUI() {
   if (!state.user) return;
   elements.userProfileBadge.style.display = 'flex';
@@ -995,6 +1117,9 @@ function updateSignedInUI() {
   elements.myAvatar.style.backgroundColor = safeColor(state.color);
   elements.myUsername.textContent = state.user.username;
   elements.myAdminCrown.style.display = state.user.role === 'admin' ? 'inline' : 'none';
+  elements.btnJoinRequestNotifications.style.display = state.user.role === 'admin'
+    ? 'inline-grid'
+    : 'none';
   elements.btnSettings.style.display = 'inline-flex';
   elements.settingsButtonLabel.textContent = state.user.role === 'admin' ? 'Admin Settings' : 'Your Code Access';
   elements.btnAddFile.style.display = state.user.role === 'admin' ? 'inline-flex' : 'none';
@@ -1082,7 +1207,7 @@ function handleWsMessage(data) {
       state.palette = data.palette || state.palette;
       state.claimedColors = data.claimed_colors || {};
       state.activeUsers = data.active_users || [];
-      state.students = data.students || [];
+      state.guests = data.guests || [];
       chooseAvailableColor();
       renderColorGrid();
       renderPresence();
@@ -1093,7 +1218,10 @@ function handleWsMessage(data) {
       state.joined = true;
       state.user = { ...state.user, ...data.user };
       state.chatHistory = data.messages || [];
-      state.students = data.students || state.students;
+      state.guests = data.guests || state.guests;
+      if (state.user.role === 'admin') {
+        updateJoinRequestCount(data.join_request_count || 0);
+      }
       updateSignedInUI();
       renderPresence();
       renderChatMessages();
@@ -1109,7 +1237,7 @@ function handleWsMessage(data) {
     case 'user_left':
       state.activeUsers = data.active_users || [];
       state.claimedColors = data.claimed_colors || {};
-      state.students = data.students || state.students;
+      state.guests = data.guests || state.guests;
       renderPresence();
       renderColorGrid();
       updateDmRecipientDropdown();
@@ -1118,16 +1246,29 @@ function handleWsMessage(data) {
       if (isSettingsDialogOpen()) loadAccessSettings();
       break;
 
-    case 'student_records_updated':
-      state.students = data.students || [];
+    case 'guest_records_updated':
+      state.guests = data.guests || [];
       if (data.active_users) state.activeUsers = data.active_users;
       updateDmRecipientDropdown();
       renderPresence();
       if (elements.dlgAdminSettings.open) {
-        loadAdminStudents();
+        loadAdminGuests();
         loadAccessSettings();
       }
-      if (elements.dlgStudentSettings.open) loadAccessSettings();
+      if (elements.dlgGuestSettings.open) loadAccessSettings();
+      break;
+
+    case 'join_request_created':
+      if (state.user?.role !== 'admin') break;
+      updateJoinRequestCount(data.pending_count || state.joinRequestCount + 1);
+      showJoinRequestNotification(data.request);
+      if (elements.dlgAdminSettings.open) loadJoinRequests();
+      break;
+
+    case 'join_requests_updated':
+      if (state.user?.role !== 'admin') break;
+      updateJoinRequestCount(data.pending_count || 0);
+      if (elements.dlgAdminSettings.open) loadJoinRequests();
       break;
 
     case 'workspace_updated':
@@ -1140,6 +1281,10 @@ function handleWsMessage(data) {
 
     case 'code_delta':
       applyRemoteDelta(data);
+      break;
+
+    case 'code_delta_ack':
+      applyCodeDeltaAck(data);
       break;
 
     case 'file_state':
@@ -1346,6 +1491,63 @@ function applyRemoteDelta(data) {
   state.editor.scrollTo(scroll.left, scroll.top);
 }
 
+function applyLocalAuthorDelta(fileId, change, oldCode) {
+  const oldLines = String(oldCode || '').split('\n');
+  const rawStart = Number(change.from?.line || 0);
+  const rawEnd = Number(change.to?.line ?? rawStart);
+  const startLine = Math.max(0, Math.min(rawStart, oldLines.length - 1));
+  const endLine = Math.max(startLine, Math.min(rawEnd, oldLines.length - 1));
+  const textLines = Array.isArray(change.text) ? change.text : [''];
+  const replacement = textLines.join('\n');
+  const resultingCode = applyTextDelta(oldCode, change.from, change.to, replacement);
+  const resultingLines = resultingCode.split('\n');
+  const oldAuthors = state.lineAuthors[fileId] || {};
+  const replacementCount = textLines.length;
+  const removedCount = endLine - startLine + 1;
+  const lineShift = replacementCount - removedCount;
+  const newAuthors = {};
+
+  Object.entries(oldAuthors).forEach(([key, info]) => {
+    const index = Number(key);
+    if (index < startLine) newAuthors[String(index)] = info;
+    else if (index > endLine) newAuthors[String(index + lineShift)] = info;
+  });
+
+  const preservedOwner = oldAuthors[String(startLine)];
+  const actorOwner = {
+    account_id: state.user?.account_id || '',
+    author: state.user?.username || 'Guest',
+    color: state.user?.color || state.color || '#38BDF8',
+  };
+  for (let offset = 0; offset < replacementCount; offset += 1) {
+    const index = startLine + offset;
+    if (index >= resultingLines.length || !resultingLines[index].trim()) continue;
+    newAuthors[String(index)] = offset === 0 && preservedOwner
+      ? preservedOwner
+      : actorOwner;
+  }
+
+  state.lineAuthors[fileId] = newAuthors;
+  return resultingCode;
+}
+
+function applyCodeDeltaAck(data) {
+  const file = state.files.find((item) => item.id === data.file_id);
+  if (!file) return;
+  const acknowledgedRevision = Number(data.revision);
+  const currentRevision = Number(file.revision || 0);
+  if (Number.isFinite(acknowledgedRevision) && acknowledgedRevision < currentRevision) return;
+
+  const acknowledgedSequence = Number(data.client_sequence);
+  const latestSequence = Number(state.latestLocalSequenceByFile[data.file_id] || 0);
+  if (Number.isFinite(acknowledgedSequence) && acknowledgedSequence < latestSequence) {
+    return;
+  }
+
+  if (Number.isFinite(acknowledgedRevision)) file.revision = acknowledgedRevision;
+  state.lineAuthors[data.file_id] = data.line_authors || state.lineAuthors[data.file_id] || {};
+}
+
 function applyTextDelta(code, from, to, replacement) {
   const lines = String(code || '').split('\n');
   const offsetFor = (position) => {
@@ -1490,7 +1692,7 @@ async function loadAccessSettings() {
     } else {
       state.globalEditor = Boolean(data.global_editor);
       state.editableOwnerIds = new Set(data.editable_owner_ids || []);
-      renderAccessList(elements.studentCodeAccessList, data.users, 'owner');
+      renderAccessList(elements.guestCodeAccessList, data.users, 'owner');
     }
   } catch (error) {
     showToast(error.message, 'error');
@@ -1502,7 +1704,7 @@ function renderAccessList(container, users, mode) {
   if (!users?.length) {
     const empty = document.createElement('p');
     empty.className = 'empty-state';
-    empty.textContent = 'No other students are available.';
+    empty.textContent = 'No other Guests are available.';
     container.appendChild(empty);
     return;
   }
@@ -1561,72 +1763,199 @@ async function openSettings() {
   if (state.user?.role === 'admin') {
     elements.txtAdminDisplayName.value = state.user.username;
     elements.numTabLimit.value = state.tabLimit;
-    await Promise.all([loadAdminStudents(), loadAccessSettings()]);
+    await Promise.all([loadAdminGuests(), loadJoinRequests(), loadAccessSettings()]);
     elements.dlgAdminSettings.showModal();
   } else {
     await loadAccessSettings();
-    elements.dlgStudentSettings.showModal();
+    elements.dlgGuestSettings.showModal();
   }
   lucide.createIcons();
 }
 
 function isSettingsDialogOpen() {
-  return elements.dlgAdminSettings.open || elements.dlgStudentSettings.open;
+  return elements.dlgAdminSettings.open || elements.dlgGuestSettings.open;
 }
 
-async function loadAdminStudents() {
+async function loadAdminGuests() {
   try {
-    const response = await authorizedFetch('/api/students');
+    const response = await authorizedFetch('/api/guests');
     const data = await response.json();
-    if (!response.ok) throw new Error(data.detail || 'Unable to load student records.');
-    renderStudentRecords(data.students || []);
+    if (!response.ok) throw new Error(data.detail || 'Unable to load approved Guests.');
+    renderGuestRecords(data.guests || []);
   } catch (error) {
-    setMessage(elements.studentRecordMessage, error.message, 'error');
+    setMessage(elements.guestRecordMessage, error.message, 'error');
   }
 }
 
-function renderStudentRecords(students) {
-  elements.studentRecordsList.replaceChildren();
-  students.forEach((student) => {
+function renderGuestRecords(guests) {
+  elements.guestRecordsList.replaceChildren();
+  if (!guests.length) {
+    const empty = document.createElement('p');
+    empty.className = 'empty-state';
+    empty.textContent = 'No Guests have been approved yet.';
+    elements.guestRecordsList.appendChild(empty);
+    return;
+  }
+  guests.forEach((guest) => {
     const row = document.createElement('div');
-    row.className = 'student-record-row';
+    row.className = 'guest-record-row';
     const details = document.createElement('div');
     const heading = document.createElement('strong');
-    heading.textContent = student.full_name;
+    heading.textContent = guest.full_name;
     const metadata = document.createElement('small');
-    metadata.textContent = `${student.student_id} • DOB ${formatDisplayDate(student.date_of_birth)}`;
+    metadata.textContent = guest.online ? 'Online now' : 'Approved Guest';
     details.append(heading, metadata);
-    if (student.other_info && Object.keys(student.other_info).length) {
-      const extra = document.createElement('small');
-      extra.textContent = Object.values(student.other_info).join(' • ');
-      details.appendChild(extra);
-    }
 
     const remove = document.createElement('button');
     remove.type = 'button';
     remove.className = 'btn btn-danger btn-sm';
     remove.textContent = 'Remove';
     remove.addEventListener('click', async () => {
-      if (!confirm(`Remove ${student.full_name}? Their active session will be closed.`)) return;
-      const response = await authorizedFetch(`/api/students/${encodeURIComponent(student.account_id)}`, {
+      if (!confirm(`Remove ${guest.full_name}? Their active session will be closed.`)) return;
+      const response = await authorizedFetch(`/api/guests/${encodeURIComponent(guest.account_id)}`, {
         method: 'DELETE',
       });
       const data = await response.json();
       if (!response.ok) {
-        showToast(data.detail || 'Unable to remove student.', 'error');
+        showToast(data.detail || 'Unable to remove Guest.', 'error');
         return;
       }
-      showToast(`${student.full_name} was removed.`, 'success');
-      await Promise.all([loadAdminStudents(), loadAccessSettings()]);
+      showToast(`${guest.full_name} was removed.`, 'success');
+      await Promise.all([loadAdminGuests(), loadAccessSettings()]);
     });
     row.append(details, remove);
-    elements.studentRecordsList.appendChild(row);
+    elements.guestRecordsList.appendChild(row);
   });
 }
 
-function formatDisplayDate(value) {
-  const [year, month, day] = String(value || '').split('-');
-  return year && month && day ? `${day}/${month}/${year}` : value;
+function updateJoinRequestCount(count) {
+  state.joinRequestCount = Math.max(0, Number(count) || 0);
+  const visible = state.joinRequestCount > 0;
+  const label = state.joinRequestCount > 99 ? '99+' : String(state.joinRequestCount);
+  elements.joinRequestNotificationCount.textContent = label;
+  elements.joinRequestNotificationCount.style.display = visible ? 'inline-flex' : 'none';
+  elements.joinRequestsSettingsCount.textContent = label;
+  elements.joinRequestsSettingsCount.style.display = visible ? 'inline-flex' : 'none';
+}
+
+async function loadJoinRequests() {
+  if (state.user?.role !== 'admin') return;
+  try {
+    const response = await authorizedFetch('/api/join-requests');
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || 'Unable to load join requests.');
+    state.joinRequests = data.requests || [];
+    updateJoinRequestCount(data.pending_count || 0);
+    renderJoinRequests();
+  } catch (error) {
+    elements.joinRequestsList.replaceChildren();
+    const message = document.createElement('p');
+    message.className = 'empty-state';
+    message.textContent = error.message;
+    elements.joinRequestsList.appendChild(message);
+  }
+}
+
+function renderJoinRequests() {
+  elements.joinRequestsList.replaceChildren();
+  if (!state.joinRequests.length) {
+    const empty = document.createElement('p');
+    empty.className = 'empty-state';
+    empty.textContent = 'No Guests are waiting to join.';
+    elements.joinRequestsList.appendChild(empty);
+    return;
+  }
+  state.joinRequests.forEach((request) => {
+    const row = document.createElement('div');
+    row.className = 'join-request-row';
+    const identity = document.createElement('div');
+    identity.className = 'join-request-identity';
+    const avatar = document.createElement('span');
+    avatar.className = 'join-request-avatar';
+    avatar.textContent = request.full_name.charAt(0).toUpperCase();
+    const details = document.createElement('span');
+    details.className = 'join-request-details';
+    const name = document.createElement('strong');
+    name.textContent = `${request.full_name} wants to join`;
+    const timestamp = document.createElement('small');
+    timestamp.textContent = `Requested ${formatJoinRequestTime(request.requested_at)}`;
+    details.append(name, timestamp);
+    identity.append(avatar, details);
+
+    const actions = document.createElement('div');
+    actions.className = 'join-request-actions';
+    const accept = document.createElement('button');
+    accept.type = 'button';
+    accept.className = 'join-request-accept';
+    accept.textContent = 'Accept';
+    const reject = document.createElement('button');
+    reject.type = 'button';
+    reject.className = 'join-request-reject';
+    reject.textContent = 'Reject';
+    const resolve = async (decision) => {
+      accept.disabled = true;
+      reject.disabled = true;
+      const response = await authorizedFetch(
+        `/api/join-requests/${encodeURIComponent(request.id)}/${decision}`,
+        { method: 'POST' },
+      );
+      const data = await response.json();
+      if (!response.ok) {
+        accept.disabled = false;
+        reject.disabled = false;
+        showToast(data.detail || `Unable to ${decision} this request.`, 'error');
+        return;
+      }
+      showToast(
+        decision === 'approve'
+          ? `${request.full_name} was accepted.`
+          : `${request.full_name} was rejected.`,
+        decision === 'approve' ? 'success' : 'error',
+      );
+      await Promise.all([loadJoinRequests(), loadAdminGuests(), loadAccessSettings()]);
+    };
+    accept.addEventListener('click', () => resolve('approve'));
+    reject.addEventListener('click', () => resolve('reject'));
+    actions.append(accept, reject);
+    row.append(identity, actions);
+    elements.joinRequestsList.appendChild(row);
+  });
+}
+
+function formatJoinRequestTime(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? 'just now'
+    : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+async function openJoinRequestsSettings() {
+  if (state.user?.role !== 'admin') return;
+  if (!elements.dlgAdminSettings.open) {
+    await openSettings();
+  } else {
+    await loadJoinRequests();
+  }
+  elements.joinRequestsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  elements.joinRequestsSection.classList.add('attention');
+  setTimeout(() => elements.joinRequestsSection.classList.remove('attention'), 1400);
+}
+
+function showJoinRequestNotification(request) {
+  if (!request?.full_name) return;
+  const toast = document.createElement('button');
+  toast.type = 'button';
+  toast.className = 'toast-card join-request-toast';
+  const text = document.createElement('span');
+  text.className = 'toast-text';
+  text.textContent = `${request.full_name} wants to join`;
+  toast.appendChild(text);
+  toast.addEventListener('click', () => {
+    toast.remove();
+    openJoinRequestsSettings();
+  });
+  elements.toastContainer.appendChild(toast);
+  setTimeout(() => toast.remove(), 8000);
 }
 
 function applyAccountNameUpdate(data) {
@@ -1751,12 +2080,12 @@ async function loadSnapshots() {
 
 function participantDirectory() {
   const directory = new Map();
-  state.students.forEach((student) => {
-    directory.set(student.account_id, {
-      account_id: student.account_id,
-      username: student.full_name,
-      role: 'student',
-      online: Boolean(student.online),
+  state.guests.forEach((guest) => {
+    directory.set(guest.account_id, {
+      account_id: guest.account_id,
+      username: guest.full_name,
+      role: 'guest',
+      online: Boolean(guest.online),
       color: '#64748B',
     });
   });
@@ -2084,8 +2413,8 @@ function renderDmConversations() {
 
   sorted.forEach((conversation) => {
     const person = directory.get(conversation.accountId) || {
-      username: 'Former Student',
-      role: 'student',
+      username: 'Former Guest',
+      role: 'guest',
       online: false,
       color: '#64748B',
     };
@@ -2167,8 +2496,8 @@ function syncChatView() {
   }
 
   const person = participantDirectory().get(state.activeDmAccountId) || {
-    username: 'Former Student',
-    role: 'student',
+    username: 'Former Guest',
+    role: 'guest',
     online: false,
     color: '#64748B',
   };
@@ -2255,9 +2584,9 @@ function bindInterfaceEvents() {
   elements.btnFontDec.addEventListener('click', () => setFontSize(currentFontSize - 1));
 
   elements.btnChooseAdmin.addEventListener('click', () => selectLoginRole('admin'));
-  elements.btnChooseStudent.addEventListener('click', () => selectLoginRole('student'));
+  elements.btnChooseGuest.addEventListener('click', () => selectLoginRole('guest'));
   elements.btnBackFromAdmin.addEventListener('click', resetLoginChoice);
-  elements.btnBackFromStudent.addEventListener('click', resetLoginChoice);
+  elements.btnBackFromGuest.addEventListener('click', resetLoginChoice);
   document.querySelectorAll('.password-toggle').forEach((button) => {
     button.addEventListener('click', () => {
       const input = $(button.dataset.passwordTarget);
@@ -2278,20 +2607,14 @@ function bindInterfaceEvents() {
     submitLogin('admin', { password });
   });
 
-  elements.frmStudentLogin.addEventListener('submit', (event) => {
+  elements.frmGuestLogin.addEventListener('submit', (event) => {
     event.preventDefault();
-    const studentId = elements.txtStudentIdLogin.value.trim();
-    const dateOfBirth = elements.txtStudentDobLogin.value;
-    const password = elements.txtStudentPassword.value;
-    if (!studentId || !dateOfBirth || !password) {
-      setMessage(elements.loginMessage, 'Complete every student login field.', 'error');
+    const fullName = elements.txtGuestName.value.trim();
+    if (!fullName) {
+      setMessage(elements.loginMessage, 'Enter your name before requesting access.', 'error');
       return;
     }
-    submitLogin('student', {
-      student_id: studentId,
-      date_of_birth: dateOfBirth,
-      password,
-    });
+    requestGuestJoin(fullName);
   });
   elements.btnLogout.addEventListener('click', logout);
 
@@ -2318,10 +2641,11 @@ function bindInterfaceEvents() {
   });
 
   elements.btnSettings.addEventListener('click', openSettings);
+  elements.btnJoinRequestNotifications.addEventListener('click', openJoinRequestsSettings);
   elements.btnCloseAdminSettings.addEventListener('click', () => elements.dlgAdminSettings.close());
-  elements.btnCloseStudentSettings.addEventListener('click', () => elements.dlgStudentSettings.close());
+  elements.btnCloseGuestSettings.addEventListener('click', () => elements.dlgGuestSettings.close());
   elements.btnAdminAppearance.addEventListener('click', () => openAppearance(elements.dlgAdminSettings));
-  elements.btnStudentAppearance.addEventListener('click', () => openAppearance(elements.dlgStudentSettings));
+  elements.btnGuestAppearance.addEventListener('click', () => openAppearance(elements.dlgGuestSettings));
   elements.btnChooseWallpaper.addEventListener('click', () => elements.inputWallpaper.click());
   elements.inputWallpaper.addEventListener('change', () => chooseWallpaper(elements.inputWallpaper.files?.[0]));
   elements.btnRemoveWallpaper.addEventListener('click', removeSelectedWallpaper);
@@ -2373,36 +2697,6 @@ function bindInterfaceEvents() {
     state.user.username = data.username;
     updateSignedInUI();
     setMessage(elements.adminNameMessage, 'Admin name updated.', 'success');
-  });
-
-  elements.frmAddStudent.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const fullName = elements.txtNewStudentName.value.trim();
-    const studentId = elements.txtNewStudentId.value.trim();
-    const dateOfBirth = elements.txtNewStudentDob.value;
-    if (!fullName || !studentId || !dateOfBirth) {
-      setMessage(elements.studentRecordMessage, 'Name, Student ID, and DOB are required.', 'error');
-      return;
-    }
-    const otherText = elements.txtNewStudentInfo.value.trim();
-    const response = await authorizedFetch('/api/students', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        full_name: fullName,
-        student_id: studentId,
-        date_of_birth: dateOfBirth,
-        other_info: otherText ? { notes: otherText } : {},
-      }),
-    });
-    const data = await response.json();
-    if (!response.ok) {
-      setMessage(elements.studentRecordMessage, data.detail || 'Unable to add student.', 'error');
-      return;
-    }
-    elements.frmAddStudent.reset();
-    setMessage(elements.studentRecordMessage, `${data.student.full_name} was added.`, 'success');
-    await Promise.all([loadAdminStudents(), loadAccessSettings()]);
   });
 
   elements.btnSaveTabLimit.addEventListener('click', async () => {

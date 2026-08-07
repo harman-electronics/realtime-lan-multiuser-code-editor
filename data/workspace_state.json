@@ -5,14 +5,7 @@
       "id": "file_main",
       "name": "main.py",
       "language": "python",
-      "code": "def calculate_total(first: int, second: int) -> int:\n    return first + second\n\nfirst = int(input(\"First number: \"))\nsecond = int(input(\"Second number: \"))\nprint(\"Sum:\", calculate_total(first, second))\n",
-      "revision": 0
-    },
-    {
-      "id": "file_cpp_demo",
-      "name": "hello.cpp",
-      "language": "cpp",
-      "code": "#include <iostream>\n\nint main() {\n    int first, second;\n    std::cout << \"Enter two numbers: \";\n    std::cin >> first >> second;\n    std::cout << \"Sum: \" << first + second << std::endl;\n    return 0;\n}\n",
+      "code": "# Write code here...\n",
       "revision": 0
     }
   ]

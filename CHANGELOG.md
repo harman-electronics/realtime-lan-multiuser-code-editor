@@ -3,6 +3,90 @@
 All notable changes to the Real-Time LAN Multiuser Code Editor will be recorded
 in this file.
 
+## Version 4.0 — Guest Approval and Final Collaboration Workflow
+
+Version 4.0 replaces the registered Student login introduced in Version 2.0
+with a live Admin-approved Guest workflow. It includes the complete Version 3.0
+interface and appearance system together with all later approved collaboration,
+execution, and cleanup changes.
+
+### Guest access and administration
+
+- Replaced Student ID, date-of-birth, and shared-password login with a Guest
+  form that asks for a full name and cursor colour.
+- Added live join requests and an Admin notification such as
+  `Bob wants to join`.
+- Added a Join Requests screen in Admin Settings with green Accept and red
+  Reject controls.
+- Accepted requests automatically create or restore the Guest identity and
+  enter the workspace; rejected or expired requests show a clear result.
+- Added a 30-minute expiry for unanswered join requests.
+- Retained one-active-session enforcement for each approved Guest identity.
+- Replaced manual Student creation with an approved Guest list and Admin removal
+  controls. Removing a Guest closes active connections, revokes sessions, and
+  removes access grants while retaining historical authorship and messages.
+- Changed the default Admin password to `12345`. It remains configurable with
+  `LIVE_EDITOR_ADMIN_PASSWORD`.
+
+### Workspace, collaboration, and messaging
+
+- Raised the Admin-configurable file-tab maximum from 6 to 15 while retaining a
+  clean default limit of 6.
+- Retained Python and C++ tabs, persistent line ownership, blank-line insertion,
+  per-owner access, Admin global access, snapshots, and real-time synchronization.
+- Retained the full-screen adjustable layout, redesigned themes, per-PC
+  wallpapers, Fill/Fit, adaptive colours, ambient background, dimming,
+  visibility, and panel blur from Version 3.0.
+- Retained started-conversation Direct Messages, unread alerts, and synchronized
+  Telegram-style message editing and deletion.
+- Removed the floating name cloud above remote typing cursors while preserving
+  colour-coded cursors and active-line typing highlights.
+- Fixed consecutive blank-line ownership so the creator's browser and all other
+  clients keep the same owner after repeated Enter presses and continued typing.
+- Added immediate local ownership remapping plus an authoritative server
+  acknowledgement for each accepted code change, preventing the creator's
+  browser from using stale line indexes.
+- Kept the unused Problems tab and non-working workspace controls removed.
+
+### Execution and verification
+
+- Retained the corrected per-file Program Input path for Python `input()` and
+  C++ `std::cin`, with a 20,000-character limit and per-browser storage.
+- Clarified in the interface that separate Python `input()` calls need one value
+  per line, while C++ `std::cin` accepts spaces or new lines.
+- Retained automatic discovery of `g++` or `clang++`, optional
+  `LIVE_EDITOR_CPP_COMPILER`, C++17 compilation, detailed errors, and timeouts.
+- Expanded the permanent isolated suite to 17 tests covering Guest approval and
+  rejection, live notifications, one active session, Admin removal, 15-tab
+  enforcement, permissions, chat editing/deletion, execution, input, errors,
+  cursor-label removal and consecutive-line ownership; all 17 tests pass.
+- Re-ran the separate 12-case Python/C++ execution matrix covering loops,
+  functions, recursion, classes, imports, multiple inputs, Unicode, expected
+  errors, timeouts, and real C++ STL compilation; all 12 cases pass.
+- Updated local CSS and JavaScript cache identifiers for Version 4.0. Users
+  upgrading from an earlier release should restart the server and press
+  `Ctrl+F5`.
+- Cleaned Guest records, requests, chats, access grants, snapshots, workspace
+  code, and legacy Student records from the public release data.
+
+### Security and privacy
+
+- Use Version 4.0 only on a trusted host and trusted LAN; do not expose the
+  development server to the public internet.
+- Guest names, code, messages, snapshots, authorship, and permissions are stored
+  locally as readable JSON and must be cleaned before publishing a used copy.
+- The application does not provide HTTPS, university SSO, encrypted storage, or
+  a complete execution sandbox. Every participant with code-execution access
+  must be trusted.
+- Wallpaper images and appearance preferences remain in the participant's local
+  browser and are not synchronized through the server.
+
+### Purpose
+
+Version 4.0 makes joining a small trusted collaboration session easier without
+requiring the Admin to pre-register personal Student details. The Admin still
+controls entry, identity removal, code access, and workspace limits.
+
 ## Version 3.0 — Major Interface and Appearance Update
 
 Version 3.0 combines the approved appearance, workspace-navigation, wallpaper,
