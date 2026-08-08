@@ -70,7 +70,7 @@ Windows Command Prompt:
 
 ```cmd
 python -m venv .venv
-.venv\Scripts\activate.bat
+.\.venv\Scripts\activate.bat
 ```
 
 macOS or Linux:
