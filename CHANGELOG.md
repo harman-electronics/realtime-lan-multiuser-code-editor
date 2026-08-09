@@ -43,6 +43,16 @@ for Python and C++ programs.
 - Expanded the permanent isolated suite to 19 tests; all 19 pass.
 - Re-ran the 12-case Python/C++ execution matrix; all 12 cases pass.
 
+### Documentation correction
+
+- Replaced the current README's Version 4.0 screenshot references with genuine
+  Version 4.1 captures of the light theme, dark theme, and dark fitted-wallpaper
+  interface.
+- The new captures show the current Python/C++ tabs, narrower workspace rail,
+  interactive terminal, submitted input colours, and yellow completion status.
+- Retained the earlier Version 4.0 images in `docs/images/` as historical release
+  material; they are no longer presented as the current interface.
+
 ### Security note
 
 - Interactive programs still execute on the trusted host without a complete

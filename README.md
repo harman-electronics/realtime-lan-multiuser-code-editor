@@ -31,21 +31,24 @@ changes, security notes, and previous releases.
 > execution sandbox. Every person allowed to run code on the host must be
 > trusted.
 
-### Default light theme
+### Version 4.1 light theme and interactive terminal
 
-![Default light theme](docs/images/version-4.0-default-light.png)
+![Version 4.1 light theme with the interactive Python terminal](docs/images/version-4.1-default-light.png)
 
-### Default dark theme
+### Version 4.1 dark theme and interactive terminal
 
-![Default dark theme](docs/images/version-4.0-default-dark.png)
+![Version 4.1 dark theme with the interactive Python terminal](docs/images/version-4.1-default-dark.png)
 
-### Dark theme with a fitted wallpaper
+### Version 4.1 dark theme with a fitted wallpaper
 
-![Dark theme with fitted wallpaper](docs/images/version-4.0-wallpaper-dark-fit.png)
+![Version 4.1 dark theme with a fitted local wallpaper](docs/images/version-4.1-wallpaper-dark-fit.png)
 
 The wallpaper example uses **Fit**, **5% background dimming**, **98% wallpaper
 visibility**, and **2px panel blur**. Wallpaper images and appearance settings
-are saved only in the current browser on that PC and are not synchronized.
+are saved only in the current browser on that PC and are not synchronized. All
+three screenshots above were captured from the working Version 4.1 interface;
+the terminal shows submitted input in blue and successful status messages in
+yellow, while red is reserved for errors and failed limits.
 
 ## Main features
 
