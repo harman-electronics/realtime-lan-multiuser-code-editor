@@ -5,16 +5,15 @@ line ownership, Admin-approved Guest access, chat, appearance controls, and
 host-side code execution. Changes, presence, messages, permissions, and file
 updates are synchronized for connected users in real time.
 
-## Version 4.0 — Guest Approval and Final Collaboration Workflow
+## Version 4.1 — Interactive Input Terminal
 
-Version 4.0 replaces pre-registered Student login with a live Guest join-request
-workflow. A Guest enters a name, the Admin receives a notification, and the
-request can be accepted or rejected from Admin Settings. This release also
-raises the configurable file-tab maximum to 15 and includes every approved
-workspace, messaging, execution, and appearance improvement from earlier
-versions. It fixes consecutive-line ownership so a Guest can repeatedly press
-Enter beneath another user's code and continue editing every new line they
-create, while all connected clients show the same owner.
+Version 4.1 replaces the saved pre-run input box with a live terminal. Start a
+Python or C++ program, respond when it asks for input, and continue entering
+values one line at a time without restarting it. Output, errors, and prompts
+stream into the terminal while the program is running, and a Stop button ends
+the current user's process. Version 4.1 retains the Admin-approved Guest
+workflow, collaboration, messaging, appearance system, and ownership fix from
+Version 4.0.
 
 Read the [changelog](CHANGELOG.md) for the complete feature history, detailed
 changes, security notes, and previous releases.
@@ -34,15 +33,15 @@ changes, security notes, and previous releases.
 
 ### Default light theme
 
-![Version 4.0 default light theme](docs/images/version-4.0-default-light.png)
+![Default light theme](docs/images/version-4.0-default-light.png)
 
 ### Default dark theme
 
-![Version 4.0 default dark theme](docs/images/version-4.0-default-dark.png)
+![Default dark theme](docs/images/version-4.0-default-dark.png)
 
 ### Dark theme with a fitted wallpaper
 
-![Version 4.0 dark theme with fitted wallpaper](docs/images/version-4.0-wallpaper-dark-fit.png)
+![Dark theme with fitted wallpaper](docs/images/version-4.0-wallpaper-dark-fit.png)
 
 The wallpaper example uses **Fit**, **5% background dimming**, **98% wallpaper
 visibility**, and **2px panel blur**. Wallpaper images and appearance settings
@@ -53,8 +52,9 @@ are saved only in the current browser on that PC and are not synchronized.
 - Live Admin approval or rejection of Guest join requests
 - Real-time multi-file Python and C++ collaboration over a LAN
 - Persistent line ownership, blank-line claiming, and code-access permissions
-- Up to 15 Admin-configurable file tabs with per-file Program Input (`stdin`)
-- Python and C++ execution, detailed errors, and restorable code snapshots
+- Up to 15 Admin-configurable Python and C++ file tabs
+- Live interactive terminal input, streamed output, Stop control, detailed
+  errors, and restorable code snapshots
 - Group Chat and Direct Messages with unread alerts, editing, and deletion
 - One active session per approved Guest and Admin removal controls
 - Adjustable full-screen workspace, terminal, chat, and Admin Settings panels
@@ -119,13 +119,13 @@ python app.py
 This is safer than editing the default value in `app.py` and avoids committing
 a personal password to GitHub.
 
-## Program Input (`stdin`)
+## Interactive terminal input
 
-Enter input in **Program Input (stdin)** before running a file. It is limited to
-20,000 characters, saved separately for each file in the current browser, and
-not synchronized with other participants.
+Select **Run Python** or **Compile & Run C++**. When the program asks for a
+value, type it in the terminal input row and press `Enter` or select **Send**.
+The program remains active for later prompts, just like a normal terminal.
 
-For separate Python `input()` calls, enter one value per line:
+For separate Python `input()` calls, send one value at each prompt:
 
 ```text
 10
@@ -134,7 +134,10 @@ For separate Python `input()` calls, enter one value per line:
 
 Entering `10 5` on one line gives the first Python `input()` call the complete
 text. C++ `std::cin` accepts either `10 5` on one line or values on separate
-lines.
+lines. Each account can run one program at a time on the host. The safeguards
+are 60 seconds per run, 100,000 output characters, 4,096 characters per input
+line, 20,000 input characters per run, 20 active runs across the host, and four
+simultaneous C++ compilations.
 
 ## C++ compiler and libraries
 
@@ -179,10 +182,11 @@ operating-system-specific packages may need additional host configuration.
 
 ## Testing
 
-Version 4.0 passed **17/17 permanent automated tests** and **12/12 Python/C++
-execution-matrix tests**, including Guest approval, permissions, messaging,
-input, imports, loops, functions, recursion, classes, errors, timeouts, Unicode,
-and real C++17 STL compilation.
+Version 4.1 passed **19/19 permanent automated tests** and **12/12 Python/C++
+execution-matrix tests**, including live Python and C++ terminal input, stopping
+a waiting process, Guest approval, permissions, messaging, imports, loops,
+functions, recursion, classes, errors, timeouts, Unicode, and real C++17 STL
+compilation.
 
 ```cmd
 python test_app.py

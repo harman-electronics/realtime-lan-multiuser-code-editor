@@ -31,6 +31,9 @@ const state = {
   unreadCount: 0,
   deltaSequence: 0,
   latestLocalSequenceByFile: {},
+  terminalRunning: false,
+  terminalAcceptsInput: false,
+  terminalRunId: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -87,9 +90,12 @@ const elements = {
   btnCopyCode: $('btnCopyCode'),
   btnSaveSnapshot: $('btnSaveSnapshot'),
   outputDrawer: $('outputDrawer'),
-  programInput: $('programInput'),
-  btnClearProgramInput: $('btnClearProgramInput'),
+  terminalResizeHandle: $('terminalResizeHandle'),
   consoleOutput: $('consoleOutput'),
+  terminalInputForm: $('terminalInputForm'),
+  terminalInput: $('terminalInput'),
+  btnSendTerminalInput: $('btnSendTerminalInput'),
+  btnStopCode: $('btnStopCode'),
   tabTerminalOutput: $('tabTerminalOutput'),
   execTimeTag: $('execTimeTag'),
   btnClearOutput: $('btnClearOutput'),
@@ -172,11 +178,16 @@ const elements = {
 let currentFontSize = 15;
 let isChatCollapsed = localStorage.getItem('chat_collapsed') === 'true';
 let isChatMinimized = localStorage.getItem('chat_minimized') === 'true';
+const TERMINAL_HEIGHT_STORAGE_KEY = 'terminal_drawer_height';
+const TERMINAL_DEFAULT_HEIGHT = 255;
+const TERMINAL_MIN_HEIGHT = 140;
+const TERMINAL_MAX_HEIGHT = 620;
 
 document.addEventListener('DOMContentLoaded', async () => {
   lucide.createIcons();
   await initializeAppearance();
   initializeEditor();
+  restoreTerminalLayout();
   bindInterfaceEvents();
   restoreChatLayout();
   syncChatView();
@@ -1168,8 +1179,13 @@ function initializeWebSocket() {
   });
 
   state.socket.addEventListener('close', () => {
+    const programWasRunning = state.terminalRunning;
     state.socketReady = false;
     state.joined = false;
+    setTerminalRunning(false, false);
+    if (programWasRunning) {
+      appendTerminalOutput('\n[Connection closed. The running program was stopped.]\n', 'stderr');
+    }
     setSocketStatus('Reconnecting...', false);
     setTimeout(initializeWebSocket, 2000);
   });
@@ -1337,6 +1353,49 @@ function handleWsMessage(data) {
       loadAccessSettings();
       break;
 
+    case 'terminal_started':
+      state.terminalRunId = data.run_id;
+      setTerminalRunning(true, false);
+      break;
+
+    case 'terminal_status':
+      appendTerminalStatus(data.message);
+      break;
+
+    case 'terminal_ready':
+      state.terminalRunId = data.run_id || state.terminalRunId;
+      setTerminalRunning(true, true);
+      window.setTimeout(() => elements.terminalInput.focus(), 0);
+      break;
+
+    case 'terminal_output':
+      appendTerminalOutput(data.text || '', data.stream || 'stdout');
+      break;
+
+    case 'terminal_input_echo':
+      appendTerminalOutput(`> ${data.text || ''}\n`, 'input');
+      break;
+
+    case 'terminal_limit':
+      appendTerminalStatus(data.message, 'stderr');
+      break;
+
+    case 'terminal_error':
+      appendTerminalStatus(data.message || 'Terminal request failed.', 'stderr');
+      showToast(data.message || 'Terminal request failed.', 'error');
+      if (!state.terminalRunId) setTerminalRunning(false, false);
+      break;
+
+    case 'terminal_finished':
+      appendTerminalStatus(
+        data.message || 'Program finished.',
+        ['completed', 'stopped'].includes(data.status) ? 'status' : 'stderr',
+      );
+      elements.execTimeTag.textContent = `${Number(data.elapsed || 0).toFixed(2)}s`;
+      elements.execTimeTag.style.display = 'inline-block';
+      setTerminalRunning(false, false);
+      break;
+
     case 'auth_error':
       showToast(data.message || 'Authentication failed.', 'error');
       clearAuthentication();
@@ -1448,32 +1507,8 @@ function loadActiveFileIntoEditor() {
   elements.currentLanguageBadge.textContent = file.language === 'cpp' ? 'C++' : 'Python';
   elements.currentLanguageBadge.className = `language-badge ${file.language}`;
   elements.runButtonLabel.textContent = file.language === 'cpp' ? 'Compile & Run C++' : 'Run Python';
-  loadProgramInput(file.id);
   lucide.createIcons();
   state.editor.refresh();
-}
-
-function programInputStorageKey(fileId) {
-  return `live_editor_program_input_${fileId || 'default'}`;
-}
-
-function loadProgramInput(fileId) {
-  try {
-    elements.programInput.value = localStorage.getItem(programInputStorageKey(fileId)) || '';
-  } catch (_error) {
-    elements.programInput.value = '';
-  }
-}
-
-function saveProgramInput() {
-  try {
-    localStorage.setItem(
-      programInputStorageKey(state.activeFileId),
-      elements.programInput.value,
-    );
-  } catch (_error) {
-    showToast('Program input could not be saved in this browser.', 'error');
-  }
 }
 
 function applyRemoteDelta(data) {
@@ -1972,45 +2007,81 @@ function applyAccountNameUpdate(data) {
   renderPresence();
 }
 
-async function runCurrentFile() {
+function setTerminalRunning(running, acceptsInput = false) {
+  state.terminalRunning = running;
+  state.terminalAcceptsInput = running && acceptsInput;
+  if (!running) state.terminalRunId = null;
+  elements.btnRunCode.disabled = running;
+  elements.btnStopCode.style.display = running ? 'inline-flex' : 'none';
+  elements.btnStopCode.disabled = !running;
+  elements.terminalInput.disabled = !state.terminalAcceptsInput;
+  elements.btnSendTerminalInput.disabled = !state.terminalAcceptsInput;
+  elements.terminalInput.placeholder = state.terminalAcceptsInput
+    ? 'Type input and press Enter...'
+    : running
+      ? 'Starting program...'
+      : 'Run a program to enter input...';
+  if (!running) elements.terminalInput.value = '';
+}
+
+function appendTerminalOutput(text, stream = 'stdout') {
+  if (!text) return;
+  const shouldFollow = elements.consoleOutput.scrollHeight
+    - elements.consoleOutput.scrollTop
+    - elements.consoleOutput.clientHeight < 36;
+  if (stream === 'stdout') {
+    elements.consoleOutput.append(document.createTextNode(text));
+  } else {
+    const span = document.createElement('span');
+    span.className = stream === 'input'
+      ? 'terminal-input-echo'
+      : stream === 'status'
+        ? 'terminal-status'
+        : 'terminal-stderr';
+    span.textContent = text;
+    elements.consoleOutput.append(span);
+  }
+  if (shouldFollow) elements.consoleOutput.scrollTop = elements.consoleOutput.scrollHeight;
+}
+
+function appendTerminalStatus(message, stream = 'status') {
+  if (!message) return;
+  const currentText = elements.consoleOutput.textContent;
+  const prefix = currentText && !currentText.endsWith('\n') ? '\n' : '';
+  appendTerminalOutput(`${prefix}[${message}]\n`, stream);
+}
+
+function runCurrentFile() {
   const file = getActiveFile();
   if (!file || !state.joined) {
     showToast('Log in before running code.', 'error');
     return;
   }
-  elements.consoleOutput.className = 'console-output';
-  elements.consoleOutput.textContent = file.language === 'cpp'
-    ? 'Compiling and running C++...'
-    : 'Running Python...';
+  if (state.terminalRunning) {
+    showToast('Stop the current program before starting another.', 'error');
+    return;
+  }
+  if (state.socket?.readyState !== WebSocket.OPEN) {
+    showToast('The live connection is not ready yet.', 'error');
+    return;
+  }
+  elements.consoleOutput.replaceChildren();
   elements.outputDrawer.classList.remove('minimized');
   elements.execTimeTag.style.display = 'none';
-  sendWsMessage({ type: 'code_run_notice', file_id: file.id });
+  setTerminalRunning(true, false);
+  sendWsMessage({
+    type: 'terminal_run',
+    file_id: file.id,
+    code: state.editor.getValue(),
+  });
+}
 
-  try {
-    const response = await authorizedFetch('/api/run', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        code: state.editor.getValue(),
-        language: file.language,
-        stdin: elements.programInput.value,
-      }),
-    });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.detail || 'Execution failed.');
-    elements.execTimeTag.textContent = `${data.elapsed}s`;
-    elements.execTimeTag.style.display = 'inline-block';
-    if (data.stderr) {
-      elements.consoleOutput.className = 'console-output stderr';
-      const stage = data.stage === 'compile' ? 'Compiler output:\n' : '';
-      elements.consoleOutput.textContent = `${stage}${data.stderr}${data.stdout ? `\n${data.stdout}` : ''}`;
-    } else {
-      elements.consoleOutput.textContent = data.stdout || '(Completed successfully with no output)';
-    }
-  } catch (error) {
-    elements.consoleOutput.className = 'console-output stderr';
-    elements.consoleOutput.textContent = error.message;
-  }
+function sendTerminalInput(event) {
+  event.preventDefault();
+  if (!state.terminalAcceptsInput) return;
+  const text = elements.terminalInput.value;
+  sendWsMessage({ type: 'terminal_input', text });
+  elements.terminalInput.value = '';
 }
 
 async function saveSnapshot() {
@@ -2564,6 +2635,35 @@ function restoreChatLayout() {
   }
 }
 
+function terminalHeightBounds() {
+  const availableHeight = elements.outputDrawer.parentElement?.clientHeight || window.innerHeight;
+  return {
+    min: TERMINAL_MIN_HEIGHT,
+    max: Math.max(
+      TERMINAL_MIN_HEIGHT + 40,
+      Math.min(TERMINAL_MAX_HEIGHT, availableHeight - 180),
+    ),
+  };
+}
+
+function setTerminalHeight(height, persist = false) {
+  const bounds = terminalHeightBounds();
+  const nextHeight = Math.round(Math.min(Math.max(Number(height), bounds.min), bounds.max));
+  elements.outputDrawer.style.height = `${nextHeight}px`;
+  elements.terminalResizeHandle.setAttribute('aria-valuemin', String(bounds.min));
+  elements.terminalResizeHandle.setAttribute('aria-valuemax', String(bounds.max));
+  elements.terminalResizeHandle.setAttribute('aria-valuenow', String(nextHeight));
+  if (persist) localStorage.setItem(TERMINAL_HEIGHT_STORAGE_KEY, String(nextHeight));
+  return nextHeight;
+}
+
+function restoreTerminalLayout() {
+  const savedHeight = Number(localStorage.getItem(TERMINAL_HEIGHT_STORAGE_KEY));
+  setTerminalHeight(Number.isFinite(savedHeight) && savedHeight > 0
+    ? savedHeight
+    : TERMINAL_DEFAULT_HEIGHT);
+}
+
 function expandChat() {
   isChatCollapsed = false;
   isChatMinimized = false;
@@ -2717,11 +2817,16 @@ function bindInterfaceEvents() {
   });
 
   elements.btnRunCode.addEventListener('click', runCurrentFile);
-  elements.programInput.addEventListener('input', saveProgramInput);
-  elements.btnClearProgramInput.addEventListener('click', () => {
-    elements.programInput.value = '';
-    saveProgramInput();
-    elements.programInput.focus();
+  elements.terminalInputForm.addEventListener('submit', sendTerminalInput);
+  elements.terminalInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && !event.shiftKey) sendTerminalInput(event);
+  });
+  elements.btnStopCode.addEventListener('click', () => {
+    if (!state.terminalRunning) return;
+    elements.btnStopCode.disabled = true;
+    elements.terminalInput.disabled = true;
+    elements.btnSendTerminalInput.disabled = true;
+    sendWsMessage({ type: 'terminal_stop' });
   });
   elements.btnCopyCode.addEventListener('click', async () => {
     await navigator.clipboard.writeText(state.editor.getValue());
@@ -2734,7 +2839,7 @@ function bindInterfaceEvents() {
   });
   elements.btnCloseSnapshots.addEventListener('click', () => elements.dlgSnapshots.close());
   elements.btnClearOutput.addEventListener('click', () => {
-    elements.consoleOutput.textContent = '';
+    elements.consoleOutput.replaceChildren();
     elements.execTimeTag.style.display = 'none';
   });
   elements.btnToggleOutput.addEventListener('click', () => {
@@ -2826,12 +2931,68 @@ function bindInterfaceEvents() {
     }
   });
   initializeChatResize();
+  initializeTerminalResize();
   document.addEventListener('click', () => closeChatActionMenus());
   window.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && !isChatCollapsed && !document.querySelector('dialog[open]')) {
       isChatCollapsed = true;
       localStorage.setItem('chat_collapsed', 'true');
       elements.chatSidebar.classList.add('collapsed');
+    }
+  });
+}
+
+function initializeTerminalResize() {
+  if (!elements.terminalResizeHandle) return;
+  elements.terminalResizeHandle.addEventListener('pointerdown', (event) => {
+    if (elements.outputDrawer.classList.contains('minimized')) return;
+    event.preventDefault();
+    const startY = event.clientY;
+    const startHeight = elements.outputDrawer.getBoundingClientRect().height;
+    elements.terminalResizeHandle.setPointerCapture(event.pointerId);
+    body.classList.add('is-resizing-terminal');
+    elements.outputDrawer.classList.add('is-resizing');
+
+    const move = (moveEvent) => {
+      setTerminalHeight(startHeight + startY - moveEvent.clientY);
+    };
+    const end = () => {
+      body.classList.remove('is-resizing-terminal');
+      elements.outputDrawer.classList.remove('is-resizing');
+      setTerminalHeight(elements.outputDrawer.getBoundingClientRect().height, true);
+      state.editor?.refresh();
+      elements.terminalResizeHandle.removeEventListener('pointermove', move);
+      elements.terminalResizeHandle.removeEventListener('pointerup', end);
+      elements.terminalResizeHandle.removeEventListener('pointercancel', end);
+    };
+
+    elements.terminalResizeHandle.addEventListener('pointermove', move);
+    elements.terminalResizeHandle.addEventListener('pointerup', end);
+    elements.terminalResizeHandle.addEventListener('pointercancel', end);
+  });
+
+  elements.terminalResizeHandle.addEventListener('keydown', (event) => {
+    const currentHeight = elements.outputDrawer.getBoundingClientRect().height;
+    const bounds = terminalHeightBounds();
+    let nextHeight = currentHeight;
+    if (event.key === 'ArrowUp') nextHeight += 24;
+    else if (event.key === 'ArrowDown') nextHeight -= 24;
+    else if (event.key === 'Home') nextHeight = bounds.min;
+    else if (event.key === 'End') nextHeight = bounds.max;
+    else return;
+    event.preventDefault();
+    setTerminalHeight(nextHeight, true);
+    state.editor?.refresh();
+  });
+
+  elements.terminalResizeHandle.addEventListener('dblclick', () => {
+    setTerminalHeight(TERMINAL_DEFAULT_HEIGHT, true);
+    state.editor?.refresh();
+  });
+
+  window.addEventListener('resize', () => {
+    if (!elements.outputDrawer.classList.contains('minimized')) {
+      setTerminalHeight(elements.outputDrawer.getBoundingClientRect().height);
     }
   });
 }

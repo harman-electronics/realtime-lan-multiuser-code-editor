@@ -21,7 +21,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/addon/edit/matchbrackets.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/addon/selection/active-line.min.js"></script>
 
-  <link rel="stylesheet" href="/static/style.css?v=4.0-final" />
+  <link rel="stylesheet" href="/static/style.css?v=4.1-interactive-terminal-visual-3" />
 </head>
 <body>
   <div id="toastContainer" class="toast-container" aria-live="polite"></div>
@@ -129,30 +129,25 @@
       </div>
 
       <div class="output-drawer" id="outputDrawer">
+        <div class="terminal-resize-handle" id="terminalResizeHandle" role="separator" aria-label="Resize terminal" aria-orientation="horizontal" aria-valuemin="140" aria-valuemax="620" aria-valuenow="255" tabindex="0" title="Drag or use the arrow keys to resize the terminal"></div>
         <div class="drawer-header">
           <div class="drawer-title">
             <button class="drawer-tab active" id="tabTerminalOutput" type="button"><span>Terminal</span></button>
             <span class="exec-time-tag" id="execTimeTag" style="display:none;">0.00s</span>
           </div>
           <div class="drawer-actions">
+            <button class="mini-icon-btn terminal-stop-button" id="btnStopCode" type="button" title="Stop running program" aria-label="Stop running program" style="display:none;"><i data-lucide="square"></i></button>
             <button class="mini-icon-btn" id="btnClearOutput" type="button" title="Clear console"><i data-lucide="trash-2"></i></button>
             <button class="mini-icon-btn" id="btnToggleOutput" type="button" title="Minimize or maximize console"><i data-lucide="chevron-down" id="iconDrawerChevron"></i></button>
           </div>
         </div>
         <div class="drawer-body">
-          <section class="program-input-panel" aria-labelledby="programInputLabel">
-            <div class="program-input-header">
-              <div>
-                <label id="programInputLabel" for="programInput">Program Input <span>(stdin)</span></label>
-                <small>Python input(): one value per line. C++ std::cin: spaces or new lines. Saved on this PC for the current file.</small>
-              </div>
-              <button class="mini-icon-btn" id="btnClearProgramInput" type="button" title="Clear program input" aria-label="Clear program input">
-                <i data-lucide="eraser"></i>
-              </button>
-            </div>
-            <textarea id="programInput" class="program-input" rows="2" maxlength="20000" spellcheck="false" placeholder="Example:&#10;10&#10;5"></textarea>
-          </section>
-          <pre class="console-output" id="consoleOutput">Log in, select a file, and run your code.</pre>
+          <pre class="console-output" id="consoleOutput" role="log">Log in, select a file, and run your code.</pre>
+          <form class="terminal-input-row" id="terminalInputForm" autocomplete="off">
+            <span class="terminal-prompt" aria-hidden="true">&gt;</span>
+            <input id="terminalInput" class="terminal-input" type="text" maxlength="4096" spellcheck="false" aria-label="Program terminal input" placeholder="Run a program to enter input..." disabled />
+            <button class="terminal-send-button" id="btnSendTerminalInput" type="submit" disabled>Send</button>
+          </form>
         </div>
       </div>
     </main>
@@ -535,6 +530,6 @@
     </div>
   </dialog>
 
-  <script src="/static/app.js?v=4.0-ownership-fix"></script>
+  <script src="/static/app.js?v=4.1-interactive-terminal-visual-3"></script>
 </body>
 </html>

@@ -1,11 +1,13 @@
 import asyncio
 import base64
+import codecs
 import hmac
 import io
 import json
 import os
 import re
 import secrets
+import signal
 import shutil
 import socket
 import subprocess
@@ -13,6 +15,7 @@ import sys
 import tempfile
 import time
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -23,7 +26,13 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 
-app = FastAPI(title="Live Code Editor")
+@asynccontextmanager
+async def app_lifespan(_app: FastAPI):
+    yield
+    await manager.stop_all_executions()
+
+
+app = FastAPI(title="Live Code Editor", lifespan=app_lifespan)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.environ.get("LIVE_EDITOR_DATA_DIR", os.path.join(BASE_DIR, "data"))
@@ -51,12 +60,26 @@ MAX_MESSAGE_LENGTH = 5000
 MAX_CODE_SIZE = 500_000
 MAX_STDIN_SIZE = 20_000
 MAX_TAB_LIMIT = 15
+MAX_INTERACTIVE_EXECUTION_SECONDS = 60.0
+MAX_INTERACTIVE_OUTPUT_CHARS = 100_000
+MAX_INTERACTIVE_EXECUTIONS = 20
+MAX_INTERACTIVE_INPUT_LINE = 4_096
+MAX_INTERACTIVE_INPUT_TOTAL = 20_000
+MAX_CONCURRENT_CPP_COMPILATIONS = 4
+CPP_COMPILE_TIMEOUT_SECONDS = 15.0
 
 COLOR_PALETTE = [
     "#FF5722", "#E91E63", "#9C27B0", "#673AB7",
     "#3F51B5", "#2196F3", "#00BCD4", "#009688",
     "#4CAF50", "#8BC34A", "#FF9800", "#795548",
 ]
+
+
+def resolve_cpp_compiler() -> Optional[str]:
+    configured_compiler = os.environ.get("LIVE_EDITOR_CPP_COMPILER")
+    if configured_compiler and os.path.isfile(configured_compiler):
+        return configured_compiler
+    return shutil.which("g++") or shutil.which("clang++")
 
 DEFAULT_STUDENTS = [
     {
@@ -245,6 +268,11 @@ class ConnectionManager:
         self.user_data: Dict[str, Dict[str, Any]] = {}
         self.sessions: Dict[str, Dict[str, Any]] = {}
         self.state_lock = asyncio.Lock()
+        self.execution_lock = asyncio.Lock()
+        self.execution_sessions: Dict[str, Dict[str, Any]] = {}
+        self.cpp_compile_semaphore = asyncio.Semaphore(
+            MAX_CONCURRENT_CPP_COMPILATIONS
+        )
         self.guests: List[Dict[str, Any]] = self._load_guests()
         self.join_requests: List[Dict[str, Any]] = load_json(
             JOIN_REQUESTS_FILE,
@@ -679,6 +707,20 @@ class ConnectionManager:
         for connection_id in failed:
             self.disconnect(connection_id)
 
+    async def send_to_connection(
+        self,
+        connection_id: str,
+        message: Dict[str, Any],
+    ) -> bool:
+        websocket = self.active_connections.get(connection_id)
+        if not websocket:
+            return False
+        try:
+            await websocket.send_json(message)
+            return True
+        except Exception:
+            return False
+
     async def send_private_message(
         self,
         sender_id: str,
@@ -737,6 +779,564 @@ class ConnectionManager:
                     await websocket.send_text(payload)
                 except Exception:
                     self.disconnect(connection_id)
+
+    async def _send_execution_event(
+        self,
+        execution: Dict[str, Any],
+        message: Dict[str, Any],
+    ) -> bool:
+        payload = {
+            **message,
+            "run_id": execution["run_id"],
+            "file_id": execution["file_id"],
+        }
+        async with execution["send_lock"]:
+            return await self.send_to_connection(execution["connection_id"], payload)
+
+    @staticmethod
+    def _subprocess_options(
+        *,
+        allow_input: bool,
+        cwd: str,
+        env: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
+        options: Dict[str, Any] = {
+            "stdin": asyncio.subprocess.PIPE if allow_input else asyncio.subprocess.DEVNULL,
+            "stdout": asyncio.subprocess.PIPE,
+            "stderr": asyncio.subprocess.PIPE,
+            "cwd": cwd,
+        }
+        if env is not None:
+            options["env"] = env
+        if os.name == "nt":
+            options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            options["start_new_session"] = True
+        return options
+
+    async def _terminate_execution_process(self, process: Any) -> None:
+        if not process or process.returncode is not None:
+            return
+        if os.name == "nt":
+            try:
+                killer = await asyncio.create_subprocess_exec(
+                    "taskkill",
+                    "/PID",
+                    str(process.pid),
+                    "/T",
+                    "/F",
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                await asyncio.wait_for(killer.wait(), timeout=5)
+            except Exception:
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
+        else:
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
+                try:
+                    process.terminate()
+                except ProcessLookupError:
+                    pass
+        try:
+            await asyncio.wait_for(process.wait(), timeout=3)
+        except asyncio.TimeoutError:
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass
+            await process.wait()
+
+    async def _emit_execution_output(
+        self,
+        execution: Dict[str, Any],
+        text: str,
+        stream: str,
+    ) -> None:
+        if not text or execution.get("output_limited"):
+            return
+        remaining = MAX_INTERACTIVE_OUTPUT_CHARS - execution["output_chars"]
+        if remaining <= 0:
+            execution["output_limited"] = True
+            await self._terminate_execution_process(execution.get("process"))
+            return
+        visible = text[:remaining]
+        execution["output_chars"] += len(visible)
+        if visible:
+            await self._send_execution_event(
+                execution,
+                {
+                    "type": "terminal_output",
+                    "stream": stream,
+                    "text": visible,
+                },
+            )
+        if len(text) > remaining:
+            execution["output_limited"] = True
+            await self._send_execution_event(
+                execution,
+                {
+                    "type": "terminal_limit",
+                    "message": (
+                        f"Output stopped after {MAX_INTERACTIVE_OUTPUT_CHARS:,} "
+                        "characters."
+                    ),
+                },
+            )
+            await self._terminate_execution_process(execution.get("process"))
+
+    async def _read_execution_stream(
+        self,
+        execution: Dict[str, Any],
+        reader: Any,
+        stream: str,
+    ) -> None:
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        while not reader.at_eof() and not execution.get("output_limited"):
+            chunk = await reader.read(1024)
+            if not chunk:
+                break
+            await self._emit_execution_output(
+                execution,
+                decoder.decode(chunk),
+                stream,
+            )
+        trailing = decoder.decode(b"", final=True)
+        if trailing:
+            await self._emit_execution_output(execution, trailing, stream)
+
+    @staticmethod
+    def _remaining_execution_time(execution: Dict[str, Any]) -> float:
+        return max(0.0, execution["deadline"] - time.monotonic())
+
+    async def _run_interactive_process(
+        self,
+        execution: Dict[str, Any],
+        command: List[str],
+        *,
+        cwd: str,
+        env: Optional[Dict[str, str]] = None,
+    ) -> int:
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            **self._subprocess_options(allow_input=True, cwd=cwd, env=env),
+        )
+        execution["process"] = process
+        execution["accepts_input"] = True
+        await self._send_execution_event(
+            execution,
+            {
+                "type": "terminal_ready",
+                "message": "Program started. Terminal input is ready.",
+            },
+        )
+        readers = [
+            asyncio.create_task(
+                self._read_execution_stream(execution, process.stdout, "stdout")
+            ),
+            asyncio.create_task(
+                self._read_execution_stream(execution, process.stderr, "stderr")
+            ),
+        ]
+        try:
+            remaining = self._remaining_execution_time(execution)
+            if remaining <= 0:
+                execution["timed_out"] = True
+                await self._terminate_execution_process(process)
+                return process.returncode if process.returncode is not None else -1
+            await asyncio.wait_for(
+                process.wait(),
+                timeout=remaining,
+            )
+        except asyncio.TimeoutError:
+            execution["timed_out"] = True
+            await self._terminate_execution_process(process)
+        finally:
+            execution["accepts_input"] = False
+            await asyncio.gather(*readers, return_exceptions=True)
+            execution["process"] = None
+        return process.returncode if process.returncode is not None else -1
+
+    async def _compile_interactive_cpp(
+        self,
+        execution: Dict[str, Any],
+        source_path: str,
+        output_path: str,
+    ) -> Optional[int]:
+        compiler = resolve_cpp_compiler()
+        if not compiler:
+            await self._emit_execution_output(
+                execution,
+                (
+                    "C++ compiler not found. Install g++ or clang++, add it to "
+                    "PATH, or set LIVE_EDITOR_CPP_COMPILER.\n"
+                ),
+                "stderr",
+            )
+            return -1
+
+        await self._send_execution_event(
+            execution,
+            {"type": "terminal_status", "message": "Compiling C++..."},
+        )
+        execution["stage"] = "compile"
+        remaining = self._remaining_execution_time(execution)
+        if remaining <= 0:
+            execution["timed_out"] = True
+            return -1
+        try:
+            await asyncio.wait_for(
+                self.cpp_compile_semaphore.acquire(),
+                timeout=remaining,
+            )
+        except asyncio.TimeoutError:
+            execution["timed_out"] = True
+            return -1
+        try:
+            if execution.get("stop_reason"):
+                return None
+            remaining = self._remaining_execution_time(execution)
+            if remaining <= 0:
+                execution["timed_out"] = True
+                return -1
+            process = await asyncio.create_subprocess_exec(
+                compiler,
+                source_path,
+                "-std=c++17",
+                "-O0",
+                "-o",
+                output_path,
+                **self._subprocess_options(
+                    allow_input=False,
+                    cwd=execution["temp_dir"],
+                ),
+            )
+            execution["process"] = process
+            compile_timeout = min(CPP_COMPILE_TIMEOUT_SECONDS, remaining)
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(),
+                    timeout=compile_timeout,
+                )
+            except asyncio.TimeoutError:
+                execution["timed_out"] = True
+                await self._terminate_execution_process(process)
+                await self._emit_execution_output(
+                    execution,
+                    f"C++ compilation timed out after {compile_timeout:g} seconds.\n",
+                    "stderr",
+                )
+                return -1
+            finally:
+                execution["process"] = None
+            await self._emit_execution_output(
+                execution,
+                stdout.decode("utf-8", errors="replace"),
+                "stdout",
+            )
+            await self._emit_execution_output(
+                execution,
+                stderr.decode("utf-8", errors="replace"),
+                "stderr",
+            )
+            return process.returncode
+        finally:
+            self.cpp_compile_semaphore.release()
+
+    async def start_interactive_execution(
+        self,
+        connection_id: str,
+        user: Dict[str, Any],
+        file_id: str,
+        code: str,
+        language: str,
+    ) -> str:
+        if len(code) > MAX_CODE_SIZE:
+            raise HTTPException(status_code=413, detail="Code is too large.")
+        account_id = str(user.get("account_id", ""))
+        if not account_id:
+            raise HTTPException(status_code=401, detail="Please log in first.")
+        async with self.execution_lock:
+            if account_id in self.execution_sessions:
+                raise HTTPException(
+                    status_code=409,
+                    detail="You already have a program running. Stop it before starting another.",
+                )
+            if len(self.execution_sessions) >= MAX_INTERACTIVE_EXECUTIONS:
+                raise HTTPException(
+                    status_code=429,
+                    detail=(
+                        f"The host is already running {MAX_INTERACTIVE_EXECUTIONS} "
+                        "programs. Try again when one finishes."
+                    ),
+                )
+            execution = {
+                "run_id": f"run_{uuid.uuid4().hex[:16]}",
+                "account_id": account_id,
+                "connection_id": connection_id,
+                "file_id": file_id,
+                "language": "cpp" if language == "cpp" else "python",
+                "started": time.monotonic(),
+                "deadline": time.monotonic() + MAX_INTERACTIVE_EXECUTION_SECONDS,
+                "process": None,
+                "task": None,
+                "temp_dir": tempfile.mkdtemp(prefix="live_editor_run_"),
+                "stage": "starting",
+                "accepts_input": False,
+                "input_chars": 0,
+                "output_chars": 0,
+                "timed_out": False,
+                "output_limited": False,
+                "stop_reason": None,
+                "send_lock": asyncio.Lock(),
+            }
+            self.execution_sessions[account_id] = execution
+
+        await self._send_execution_event(
+            execution,
+            {
+                "type": "terminal_started",
+                "language": execution["language"],
+                "limits": {
+                    "execution_seconds": MAX_INTERACTIVE_EXECUTION_SECONDS,
+                    "output_chars": MAX_INTERACTIVE_OUTPUT_CHARS,
+                    "input_line_chars": MAX_INTERACTIVE_INPUT_LINE,
+                    "input_total_chars": MAX_INTERACTIVE_INPUT_TOTAL,
+                },
+            },
+        )
+        execution["task"] = asyncio.create_task(
+            self._run_execution_session(execution, code)
+        )
+        return execution["run_id"]
+
+    async def _run_execution_session(
+        self,
+        execution: Dict[str, Any],
+        code: str,
+    ) -> None:
+        returncode = -1
+        status = "failed"
+        message = "Program failed."
+        try:
+            if execution["language"] == "cpp":
+                source_path = os.path.join(execution["temp_dir"], "main.cpp")
+                output_path = os.path.join(
+                    execution["temp_dir"],
+                    "program.exe" if os.name == "nt" else "program",
+                )
+                with open(source_path, "w", encoding="utf-8") as source_file:
+                    source_file.write(code)
+                compile_returncode = await self._compile_interactive_cpp(
+                    execution,
+                    source_path,
+                    output_path,
+                )
+                if compile_returncode is None or execution.get("stop_reason"):
+                    status = "stopped"
+                    message = execution.get("stop_reason") or "Program stopped."
+                    return
+                if compile_returncode != 0:
+                    returncode = compile_returncode
+                    if execution.get("timed_out"):
+                        status = "timed_out"
+                        message = (
+                            f"Program stopped after {MAX_INTERACTIVE_EXECUTION_SECONDS:g} seconds."
+                        )
+                    elif execution.get("output_limited"):
+                        status = "output_limited"
+                        message = (
+                            f"Program stopped after {MAX_INTERACTIVE_OUTPUT_CHARS:,} "
+                            "output characters."
+                        )
+                    else:
+                        message = "C++ compilation failed."
+                    return
+                await self._send_execution_event(
+                    execution,
+                    {"type": "terminal_status", "message": "Running C++..."},
+                )
+                execution["stage"] = "run"
+                returncode = await self._run_interactive_process(
+                    execution,
+                    [output_path],
+                    cwd=execution["temp_dir"],
+                )
+            else:
+                await self._send_execution_event(
+                    execution,
+                    {"type": "terminal_status", "message": "Running Python..."},
+                )
+                execution["stage"] = "run"
+                python_env = os.environ.copy()
+                python_env["PYTHONIOENCODING"] = "utf-8"
+                returncode = await self._run_interactive_process(
+                    execution,
+                    [sys.executable, "-u", "-I", "-c", code],
+                    cwd=execution["temp_dir"],
+                    env=python_env,
+                )
+
+            if execution.get("stop_reason"):
+                status = "stopped"
+                message = execution["stop_reason"]
+            elif execution.get("timed_out"):
+                status = "timed_out"
+                message = (
+                    f"Program stopped after {MAX_INTERACTIVE_EXECUTION_SECONDS:g} seconds."
+                )
+            elif execution.get("output_limited"):
+                status = "output_limited"
+                message = (
+                    f"Program stopped after {MAX_INTERACTIVE_OUTPUT_CHARS:,} output characters."
+                )
+            elif returncode == 0:
+                status = "completed"
+                message = "Program completed successfully."
+            else:
+                status = "failed"
+                message = f"Program exited with code {returncode}."
+        except asyncio.CancelledError:
+            status = "stopped"
+            message = execution.get("stop_reason") or "Program stopped."
+        except Exception as exc:
+            await self._emit_execution_output(
+                execution,
+                f"Execution error: {exc}\n",
+                "stderr",
+            )
+            status = "failed"
+            message = "The host could not run this program."
+        finally:
+            process = execution.get("process")
+            if process and process.returncode is None:
+                await self._terminate_execution_process(process)
+            execution["accepts_input"] = False
+            shutil.rmtree(execution["temp_dir"], ignore_errors=True)
+            async with self.execution_lock:
+                current = self.execution_sessions.get(execution["account_id"])
+                if current is execution:
+                    self.execution_sessions.pop(execution["account_id"], None)
+            await self._send_execution_event(
+                execution,
+                {
+                    "type": "terminal_finished",
+                    "status": status,
+                    "message": message,
+                    "returncode": returncode,
+                    "stage": execution.get("stage", "run"),
+                    "elapsed": round(time.monotonic() - execution["started"], 3),
+                },
+            )
+
+    async def send_interactive_input(
+        self,
+        connection_id: str,
+        user: Dict[str, Any],
+        line: Any,
+    ) -> None:
+        account_id = str(user.get("account_id", ""))
+        execution = self.execution_sessions.get(account_id)
+        if not execution or execution.get("connection_id") != connection_id:
+            raise HTTPException(status_code=404, detail="No program is waiting for your input.")
+        value = str(line)
+        if "\n" in value or "\r" in value:
+            raise HTTPException(status_code=422, detail="Send one input line at a time.")
+        if len(value) > MAX_INTERACTIVE_INPUT_LINE:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    f"One input line cannot exceed {MAX_INTERACTIVE_INPUT_LINE:,} characters."
+                ),
+            )
+        new_total = execution["input_chars"] + len(value) + 1
+        if new_total > MAX_INTERACTIVE_INPUT_TOTAL:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    f"Program input cannot exceed {MAX_INTERACTIVE_INPUT_TOTAL:,} "
+                    "characters per run."
+                ),
+            )
+        process = execution.get("process")
+        if (
+            not execution.get("accepts_input")
+            or not process
+            or process.returncode is not None
+            or not process.stdin
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="The program is not ready for input yet.",
+            )
+        try:
+            process.stdin.write(f"{value}\n".encode("utf-8"))
+            await process.stdin.drain()
+        except (BrokenPipeError, ConnectionResetError):
+            raise HTTPException(
+                status_code=409,
+                detail="The program finished before it could receive that input.",
+            )
+        execution["input_chars"] = new_total
+        await self._send_execution_event(
+            execution,
+            {"type": "terminal_input_echo", "text": value},
+        )
+
+    async def stop_interactive_execution(
+        self,
+        connection_id: str,
+        user: Dict[str, Any],
+        reason: str = "Stopped by user.",
+    ) -> bool:
+        account_id = str(user.get("account_id", ""))
+        execution = self.execution_sessions.get(account_id)
+        if not execution or execution.get("connection_id") != connection_id:
+            return False
+        execution["stop_reason"] = reason
+        execution["accepts_input"] = False
+        await self._send_execution_event(
+            execution,
+            {"type": "terminal_status", "message": "Stopping program..."},
+        )
+        process = execution.get("process")
+        if process and process.returncode is None:
+            await self._terminate_execution_process(process)
+        elif execution.get("task"):
+            execution["task"].cancel()
+        return True
+
+    async def stop_execution_for_connection(
+        self,
+        connection_id: str,
+        reason: str,
+    ) -> None:
+        executions = [
+            execution
+            for execution in list(self.execution_sessions.values())
+            if execution.get("connection_id") == connection_id
+        ]
+        for execution in executions:
+            user = {"account_id": execution["account_id"]}
+            await self.stop_interactive_execution(connection_id, user, reason)
+
+    async def stop_all_executions(self) -> None:
+        tasks = []
+        for execution in list(self.execution_sessions.values()):
+            user = {"account_id": execution["account_id"]}
+            await self.stop_interactive_execution(
+                execution["connection_id"],
+                user,
+                "Server stopped.",
+            )
+            if execution.get("task"):
+                tasks.append(execution["task"])
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     def can_edit_owner(self, actor: Dict[str, Any], owner_account_id: str) -> bool:
         actor_id = actor.get("account_id")
@@ -1519,12 +2119,7 @@ def run_python(code: str, stdin: str, timeout: float) -> Dict[str, Any]:
 
 
 def run_cpp(code: str, stdin: str, timeout: float) -> Dict[str, Any]:
-    configured_compiler = os.environ.get("LIVE_EDITOR_CPP_COMPILER")
-    compiler = (
-        configured_compiler
-        if configured_compiler and os.path.isfile(configured_compiler)
-        else shutil.which("g++") or shutil.which("clang++")
-    )
+    compiler = resolve_cpp_compiler()
     if not compiler:
         return {
             "stdout": "",
@@ -1755,7 +2350,60 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str) -> None:
                 )
                 continue
 
-            if message_type == "code_delta":
+            if message_type == "terminal_run":
+                file_id = str(data.get("file_id", ""))
+                file_data = manager.get_file(file_id)
+                code = data.get("code")
+                if not file_data or not isinstance(code, str):
+                    await websocket.send_json(
+                        {"type": "terminal_error", "message": "Choose a valid code file first."}
+                    )
+                    continue
+                try:
+                    await manager.start_interactive_execution(
+                        client_id,
+                        user,
+                        file_id,
+                        code,
+                        file_data.get("language", "python"),
+                    )
+                    await manager.broadcast(
+                        {
+                            "type": "code_run_notice",
+                            "username": user["username"],
+                            "role": user["role"],
+                            "color": user["color"],
+                            "file_id": file_id,
+                        }
+                    )
+                except HTTPException as exc:
+                    await websocket.send_json(
+                        {"type": "terminal_error", "message": str(exc.detail)}
+                    )
+
+            elif message_type == "terminal_input":
+                try:
+                    await manager.send_interactive_input(
+                        client_id,
+                        user,
+                        data.get("text", ""),
+                    )
+                except HTTPException as exc:
+                    await websocket.send_json(
+                        {"type": "terminal_error", "message": str(exc.detail)}
+                    )
+
+            elif message_type == "terminal_stop":
+                stopped = await manager.stop_interactive_execution(
+                    client_id,
+                    user,
+                )
+                if not stopped:
+                    await websocket.send_json(
+                        {"type": "terminal_error", "message": "No program is currently running."}
+                    )
+
+            elif message_type == "code_delta":
                 file_id = str(data.get("file_id", ""))
                 from_pos = data.get("from")
                 to_pos = data.get("to")
@@ -2045,6 +2693,10 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str) -> None:
     except WebSocketDisconnect:
         pass
     finally:
+        await manager.stop_execution_for_connection(
+            client_id,
+            "Program stopped because the browser disconnected.",
+        )
         disconnected = manager.disconnect(client_id)
         if disconnected and disconnected.get("username"):
             await manager.broadcast(
@@ -2070,8 +2722,8 @@ if __name__ == "__main__":
 
     local_ip = get_local_ip()
     print("=" * 60)
-    print("🚀 LIVE CODE EDITOR FOR LOCAL WIFI NETWORK")
-    print("👉 Local Access:   http://localhost:8000")
-    print(f"📡 WiFi/LAN Access: http://{local_ip}:8000")
+    print("LIVE CODE EDITOR FOR LOCAL WIFI NETWORK")
+    print("Local Access:    http://localhost:8000")
+    print(f"WiFi/LAN Access: http://{local_ip}:8000")
     print("=" * 60)
-    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run(app, host="0.0.0.0", port=8000)

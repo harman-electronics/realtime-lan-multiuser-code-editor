@@ -3,6 +3,52 @@
 All notable changes to the Real-Time LAN Multiuser Code Editor will be recorded
 in this file.
 
+## Version 4.1 — Interactive Input Terminal
+
+Version 4.1 replaces the saved input-before-run workflow with a live terminal
+for Python and C++ programs.
+
+### Added and changed
+
+- Added streamed standard output and errors while a program is still running.
+- Displayed normal run and completion status messages in yellow, reserving red
+  terminal text for genuine errors, timeouts, and limit failures.
+- Slightly narrowed the desktop workspace sidebar and its controls to provide
+  more horizontal space for code without reducing usability.
+- Added a draggable terminal divider with keyboard controls, sensible height
+  limits, double-click reset, and per-browser height storage.
+- Added a terminal input row that sends one line to the running process when the
+  user presses `Enter` or selects **Send**.
+- Added a Stop control and automatic process cleanup when the browser
+  disconnects, the account logs out, or the server shuts down.
+- Limited each account to one running program at a time. Programs execute on the
+  host, with a maximum of 20 active runs and four simultaneous C++ compilations.
+- Added safeguards of 60 seconds per run, 100,000 output characters, 4,096
+  characters per input line, and 20,000 input characters per run.
+- Kept Python in unbuffered isolated-interpreter mode so `input()` prompts are
+  visible immediately, and kept automatic `g++`/`clang++` C++17 compilation.
+- Changed the normal Windows launch from auto-reload mode to one stable Uvicorn
+  process so the event loop supports live subprocess pipes. Startup labels now
+  use CMD-safe text instead of characters that can fail in legacy encodings.
+- Removed the visible per-file Program Input box and its browser storage because
+  input is now supplied only when the running program requests it.
+- Updated local CSS and JavaScript cache identifiers for Version 4.1. Users
+  upgrading from an earlier release should restart the server and press
+  `Ctrl+F5`.
+
+### Verification
+
+- Added live WebSocket tests for two separate Python `input()` prompts, C++
+  `std::cin` input, streamed results, and stopping a waiting process.
+- Expanded the permanent isolated suite to 19 tests; all 19 pass.
+- Re-ran the 12-case Python/C++ execution matrix; all 12 cases pass.
+
+### Security note
+
+- Interactive programs still execute on the trusted host without a complete
+  security sandbox. Version 4.1 must remain limited to trusted participants on
+  a trusted LAN.
+
 ## Version 4.0 — Guest Approval and Final Collaboration Workflow
 
 Version 4.0 replaces the registered Student login introduced in Version 2.0

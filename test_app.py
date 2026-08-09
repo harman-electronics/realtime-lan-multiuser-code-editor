@@ -131,6 +131,26 @@ class LiveEditorTestCase(unittest.TestCase):
     def auth_header(token):
         return {"Authorization": f"Bearer {token}"}
 
+    def join_admin_websocket(self, websocket, token):
+        self.assertEqual(websocket.receive_json()["type"], "init")
+        websocket.send_json(
+            {"type": "join", "token": token, "color": "#FF5722"}
+        )
+        self.assertEqual(websocket.receive_json()["type"], "join_success")
+        self.assertEqual(websocket.receive_json()["type"], "presence_updated")
+
+    def receive_websocket_type(self, websocket, expected_type, max_messages=60):
+        messages = []
+        for _ in range(max_messages):
+            message = websocket.receive_json()
+            messages.append(message)
+            if message.get("type") == expected_type:
+                return message, messages
+        self.fail(
+            f"Did not receive {expected_type!r}; received "
+            f"{[message.get('type') for message in messages]}"
+        )
+
     def test_admin_login_and_approved_guest_session(self):
         wrong_admin = self.client.post(
             "/api/auth/login",
@@ -562,6 +582,125 @@ class LiveEditorTestCase(unittest.TestCase):
         result = response.json()
         self.assertEqual(result["returncode"], 0, result.get("stderr"))
         self.assertEqual(result["stdout"].strip(), "120\nHello, Bob!\n8 9 3")
+
+    def test_interactive_python_terminal_accepts_live_input_and_stop(self):
+        self.assertEqual(app_module.MAX_INTERACTIVE_EXECUTION_SECONDS, 60.0)
+        self.assertEqual(app_module.MAX_INTERACTIVE_OUTPUT_CHARS, 100_000)
+        self.assertEqual(app_module.MAX_INTERACTIVE_EXECUTIONS, 20)
+        self.assertEqual(app_module.MAX_INTERACTIVE_INPUT_LINE, 4_096)
+        self.assertEqual(app_module.MAX_INTERACTIVE_INPUT_TOTAL, 20_000)
+        self.assertEqual(app_module.MAX_CONCURRENT_CPP_COMPILATIONS, 4)
+
+        token = self.login_admin()
+        with self.client.websocket_connect("/ws/admin_python_terminal") as websocket:
+            self.join_admin_websocket(websocket, token)
+            websocket.send_json(
+                {
+                    "type": "terminal_run",
+                    "file_id": "file_main",
+                    "code": (
+                        "first = int(input('First: '))\n"
+                        "second = int(input('Second: '))\n"
+                        "print(f'Total: {first + second}')\n"
+                    ),
+                }
+            )
+            started, _ = self.receive_websocket_type(websocket, "terminal_started")
+            self.assertEqual(started["limits"]["execution_seconds"], 60.0)
+            self.receive_websocket_type(websocket, "terminal_ready")
+
+            websocket.send_json({"type": "terminal_input", "text": "10"})
+            self.receive_websocket_type(websocket, "terminal_input_echo")
+            websocket.send_json({"type": "terminal_input", "text": "5"})
+            finished, messages = self.receive_websocket_type(
+                websocket,
+                "terminal_finished",
+            )
+            output = "".join(
+                message.get("text", "")
+                for message in messages
+                if message.get("type") == "terminal_output"
+            )
+            self.assertIn("Total: 15", output)
+            self.assertEqual(finished["status"], "completed")
+            self.assertEqual(finished["returncode"], 0)
+
+            websocket.send_json(
+                {
+                    "type": "terminal_run",
+                    "file_id": "file_main",
+                    "code": "input('Waiting: ')\n",
+                }
+            )
+            self.receive_websocket_type(websocket, "terminal_started")
+            self.receive_websocket_type(websocket, "terminal_ready")
+            websocket.send_json({"type": "terminal_stop"})
+            stopped, _ = self.receive_websocket_type(
+                websocket,
+                "terminal_finished",
+            )
+            self.assertEqual(stopped["status"], "stopped")
+
+        html = (Path(app_module.STATIC_DIR) / "index.html").read_text(
+            encoding="utf-8"
+        )
+        javascript = (Path(app_module.STATIC_DIR) / "app.js").read_text(
+            encoding="utf-8"
+        )
+        stylesheet = (Path(app_module.STATIC_DIR) / "style.css").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('id="terminalInput"', html)
+        self.assertIn('id="btnStopCode"', html)
+        self.assertIn('id="terminalResizeHandle"', html)
+        self.assertNotIn('id="programInput"', html)
+        self.assertIn("stream === 'status'", javascript)
+        self.assertIn("TERMINAL_HEIGHT_STORAGE_KEY", javascript)
+        self.assertIn("initializeTerminalResize", javascript)
+        self.assertIn(".terminal-status", stylesheet)
+        self.assertIn(".terminal-resize-handle", stylesheet)
+        self.assertIn("color: var(--warning-color);", stylesheet)
+
+    @unittest.skipUnless(
+        shutil.which("g++") or shutil.which("clang++"),
+        "g++ or clang++ is not installed on the host",
+    )
+    def test_interactive_cpp_terminal_accepts_live_input(self):
+        cpp_file = self.manager.create_file("interactive.cpp", "cpp")
+        token = self.login_admin()
+        with self.client.websocket_connect("/ws/admin_cpp_terminal") as websocket:
+            self.join_admin_websocket(websocket, token)
+            websocket.send_json(
+                {
+                    "type": "terminal_run",
+                    "file_id": cpp_file["id"],
+                    "code": (
+                        "#include <iostream>\n"
+                        "int main() {\n"
+                        "  int first = 0, second = 0;\n"
+                        "  std::cout << \"Enter two numbers: \";\n"
+                        "  std::cin >> first >> second;\n"
+                        "  std::cout << \"Total: \" << first + second << '\\n';\n"
+                        "  return 0;\n"
+                        "}\n"
+                    ),
+                }
+            )
+            self.receive_websocket_type(websocket, "terminal_started")
+            self.receive_websocket_type(websocket, "terminal_ready")
+            websocket.send_json({"type": "terminal_input", "text": "10 5"})
+            finished, messages = self.receive_websocket_type(
+                websocket,
+                "terminal_finished",
+            )
+            output = "".join(
+                message.get("text", "")
+                for message in messages
+                if message.get("type") == "terminal_output"
+            )
+            self.assertIn("Total: 15", output)
+            self.assertEqual(finished["status"], "completed")
+            self.assertEqual(finished["returncode"], 0)
 
     @unittest.skipUnless(
         shutil.which("g++") or shutil.which("clang++"),

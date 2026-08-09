@@ -10,8 +10,8 @@ workspace for a trusted class, lab, or small group on the same local network.
 - Languages: Python and C++ (`g++` or `clang++` is required to compile C++)
 - Persistence: JSON files in `data/`
 - Default file-tab limit: 6; Admin-configurable maximum: 15
-- Per-file Program Input supports Python `input()` and C++ `std::cin`, is limited
-  to 20,000 characters, and is saved only in that browser.
+- Live WebSocket terminal input supports Python `input()` and C++ `std::cin`.
+- Each account may have one active host-side execution session.
 
 ## Testing credentials
 
@@ -82,7 +82,9 @@ Guests cannot be added manually; every new Guest must be accepted from a join re
 
 ## Code execution
 
-Python files run with the current Python interpreter in isolated interpreter mode.
+Python files run with the current Python interpreter in unbuffered isolated
+interpreter mode. Standard output and errors are read asynchronously and sent
+only to the connection that started the process.
 
 C++ files are:
 
@@ -94,8 +96,23 @@ C++ files are:
 If no compiler is available, the output console displays an installation message.
 An explicit compiler executable can be configured with `LIVE_EDITOR_CPP_COMPILER`.
 
-Python `input()` values for separate calls must be entered on separate lines.
-C++ `std::cin` accepts whitespace-separated values on one or multiple lines.
+After a program starts, each terminal submission is written to its standard
+input with a trailing new line. Python `input()` values for separate calls must
+be sent at separate prompts. C++ `std::cin` accepts whitespace-separated values
+on one or multiple submitted lines.
+
+Execution limits:
+
+- 60 seconds per run
+- 100,000 output characters per run
+- 4,096 characters per input line
+- 20,000 input characters per run
+- One running program per account
+- 20 active runs across the host
+- Four simultaneous C++ compilations
+
+The process is stopped when the user selects Stop, the browser disconnects, the
+account logs out, the server shuts down, or a run reaches its time/output limit.
 
 Important: process timeouts are not a complete security sandbox. Run this
 application only on a trusted host and trusted local network.
@@ -178,6 +195,10 @@ Start the server:
 python app.py
 ```
 
+The direct launcher uses one Uvicorn process without auto-reload. This is
+required on Windows so the active event loop can provide subprocess pipes for
+interactive Python and C++ sessions.
+
 Run the permanent isolated suite and the Python/C++ execution matrix:
 
 ```bash
@@ -185,5 +206,7 @@ python test_app.py
 python test_execution_matrix.py
 ```
 
-Version 4.0 passes 17 permanent tests and 12 execution-matrix cases. Both suites
-use temporary directories and do not modify committed collaboration data.
+Version 4.1 passes 19 permanent tests and 12 execution-matrix cases. The new
+tests cover live Python and C++ input, streaming, and stopping a waiting process.
+Both suites use temporary directories and do not modify committed collaboration
+data.
