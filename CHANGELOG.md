@@ -44,12 +44,15 @@ behaviour.
   pending-name, server-enforcement, disabled-button, Admin Settings, toolbar
   alignment, and QR-icon regression checks.
 - Re-ran all 19 permanent tests and the 12-case Python/C++ execution matrix.
+- Captured Version 4.2 screenshots showing the QR-code sharing shortcut and the
+  disabled Guest request button with its red active-name warning.
 
 ### Main components changed
 
 - `app.py`: Guest-name availability API and request-time enforcement.
 - `static/index.html`, `static/app.js`, and `static/style.css`: Guest form
   feedback, button state, presence refresh, interface fixes, and cache update.
+- `docs/images/`: Version 4.2 QR-sharing and Guest-validation screenshots.
 - `test_app.py`: Version 4.2 regression coverage.
 
 ## Version 4.1 — Interactive Input Terminal

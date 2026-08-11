@@ -15,6 +15,14 @@ a notification, centres compact toolbar actions inside their click targets,
 and replaces the Wi-Fi sharing file icon with a QR-code icon. Collaboration and
 code-execution behaviour remain unchanged.
 
+### Version 4.2 workspace and QR sharing
+
+![Version 4.2 workspace with the QR-code Wi-Fi sharing shortcut](docs/images/version-4.2-interface-qr-sharing.png)
+
+### Version 4.2 Guest-name validation
+
+![Version 4.2 Guest login blocking a name already used by an active participant](docs/images/version-4.2-guest-name-validation.png)
+
 Read the [changelog](CHANGELOG.md) for the complete feature history, detailed
 changes, security notes, and previous releases.
 
