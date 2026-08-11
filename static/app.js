@@ -17,6 +17,10 @@ const state = {
   joinRequests: [],
   joinRequestCount: 0,
   joinRequestPollTimer: null,
+  guestNameAvailable: false,
+  guestNameCheckSequence: 0,
+  guestNameCheckTimer: null,
+  guestJoinWaiting: false,
   editableOwnerIds: new Set(),
   globalEditor: false,
   editor: null,
@@ -65,6 +69,7 @@ const elements = {
   btnBackFromGuest: $('btnBackFromGuest'),
   txtAdminPassword: $('txtAdminPassword'),
   txtGuestName: $('txtGuestName'),
+  guestNameAvailability: $('guestNameAvailability'),
   btnRequestGuestJoin: $('btnRequestGuestJoin'),
   loginColorSection: $('loginColorSection'),
   colorGrid: $('colorGrid'),
@@ -104,6 +109,7 @@ const elements = {
   btnSettings: $('btnSettings'),
   settingsButtonLabel: $('settingsButtonLabel'),
   dlgAdminSettings: $('dlgAdminSettings'),
+  adminSettingsScroll: $('adminSettingsScroll'),
   btnCloseAdminSettings: $('btnCloseAdminSettings'),
   btnAdminAppearance: $('btnAdminAppearance'),
   txtAdminDisplayName: $('txtAdminDisplayName'),
@@ -898,6 +904,7 @@ async function fetchAppInfo() {
     chooseAvailableColor();
     renderColorGrid();
     renderPresence();
+    refreshGuestNameAvailability();
   } catch {
     elements.lanIpText.textContent = 'Offline / Localhost';
   }
@@ -928,11 +935,19 @@ function showLoginDialog() {
 }
 
 function resetLoginChoice() {
+  if (state.guestNameCheckTimer) {
+    clearTimeout(state.guestNameCheckTimer);
+    state.guestNameCheckTimer = null;
+  }
+  state.guestNameCheckSequence += 1;
+  state.guestNameAvailable = false;
   elements.loginRoleSelection.style.display = 'grid';
   elements.frmAdminLogin.style.display = 'none';
   elements.frmGuestLogin.style.display = 'none';
   elements.loginColorSection.style.display = 'none';
   elements.loginSubtitle.textContent = 'Choose how you want to sign in.';
+  setGuestNameAvailabilityMessage('');
+  updateGuestJoinButtonState();
   setMessage(elements.loginMessage, '');
 }
 
@@ -947,7 +962,10 @@ function selectLoginRole(role) {
   setMessage(elements.loginMessage, '');
   renderColorGrid();
   if (role === 'admin') elements.txtAdminPassword.focus();
-  else elements.txtGuestName.focus();
+  else {
+    elements.txtGuestName.focus();
+    scheduleGuestNameAvailabilityCheck(true);
+  }
 }
 
 function chooseAvailableColor() {
@@ -1015,8 +1033,91 @@ async function submitLogin(role, credentials) {
 
 const PENDING_GUEST_REQUEST_KEY = 'live_editor_pending_guest_request';
 
+function normalizeGuestNameInput(value) {
+  return String(value || '').trim().replace(/\s+/g, ' ');
+}
+
+function setGuestNameAvailabilityMessage(message = '', type = '') {
+  elements.guestNameAvailability.textContent = message;
+  elements.guestNameAvailability.className = `guest-name-availability${type ? ` ${type}` : ''}`;
+  elements.txtGuestName.setAttribute('aria-invalid', type === 'unavailable' ? 'true' : 'false');
+}
+
+function updateGuestJoinButtonState() {
+  elements.btnRequestGuestJoin.disabled = state.guestJoinWaiting || !state.guestNameAvailable;
+}
+
+function activeUserHasGuestName(fullName) {
+  const normalizedName = fullName.toLocaleLowerCase();
+  return state.activeUsers.some(
+    (user) => normalizeGuestNameInput(user.username).toLocaleLowerCase() === normalizedName,
+  );
+}
+
+async function checkGuestNameAvailability(fullName, sequence) {
+  try {
+    const params = new URLSearchParams({ full_name: fullName });
+    const response = await fetch(`/api/guest-name-availability?${params}`);
+    const data = await response.json();
+    if (
+      sequence !== state.guestNameCheckSequence
+      || normalizeGuestNameInput(elements.txtGuestName.value) !== fullName
+      || state.guestJoinWaiting
+    ) return;
+    if (!response.ok) throw new Error(data.detail || 'Unable to check this name.');
+    state.guestNameAvailable = Boolean(data.available);
+    setGuestNameAvailabilityMessage(
+      data.message || (data.available ? 'Name is available.' : 'Name taken. Choose another name.'),
+      data.available ? 'available' : 'unavailable',
+    );
+  } catch (error) {
+    if (sequence !== state.guestNameCheckSequence || state.guestJoinWaiting) return;
+    state.guestNameAvailable = false;
+    setGuestNameAvailabilityMessage(error.message, 'unavailable');
+  }
+  updateGuestJoinButtonState();
+}
+
+function scheduleGuestNameAvailabilityCheck(immediate = false) {
+  if (state.guestNameCheckTimer) {
+    clearTimeout(state.guestNameCheckTimer);
+    state.guestNameCheckTimer = null;
+  }
+  const sequence = ++state.guestNameCheckSequence;
+  const fullName = normalizeGuestNameInput(elements.txtGuestName.value);
+  state.guestNameAvailable = false;
+  updateGuestJoinButtonState();
+  if (state.guestJoinWaiting) return;
+  if (!fullName) {
+    setGuestNameAvailabilityMessage('');
+    return;
+  }
+  if (activeUserHasGuestName(fullName)) {
+    setGuestNameAvailabilityMessage(
+      'Name taken. An active participant is already using this name.',
+      'unavailable',
+    );
+    return;
+  }
+  setGuestNameAvailabilityMessage('Checking name...', 'checking');
+  state.guestNameCheckTimer = setTimeout(
+    () => checkGuestNameAvailability(fullName, sequence),
+    immediate ? 0 : 300,
+  );
+}
+
+function refreshGuestNameAvailability() {
+  if (
+    state.authToken
+    || state.guestJoinWaiting
+    || elements.frmGuestLogin.style.display === 'none'
+  ) return;
+  scheduleGuestNameAvailabilityCheck(true);
+}
+
 function setGuestWaitingState(waiting, name = '') {
-  elements.btnRequestGuestJoin.disabled = waiting;
+  state.guestJoinWaiting = waiting;
+  updateGuestJoinButtonState();
   elements.txtGuestName.disabled = waiting;
   if (waiting) {
     setMessage(
@@ -1028,14 +1129,16 @@ function setGuestWaitingState(waiting, name = '') {
   }
 }
 
-function clearPendingGuestRequest() {
+function clearPendingGuestRequest(revalidate = true) {
   if (state.joinRequestPollTimer) {
     clearTimeout(state.joinRequestPollTimer);
     state.joinRequestPollTimer = null;
   }
   sessionStorage.removeItem(PENDING_GUEST_REQUEST_KEY);
-  elements.btnRequestGuestJoin.disabled = false;
+  state.guestJoinWaiting = false;
   elements.txtGuestName.disabled = false;
+  if (revalidate) scheduleGuestNameAvailabilityCheck(true);
+  else updateGuestJoinButtonState();
 }
 
 async function requestGuestJoin(fullName) {
@@ -1043,7 +1146,13 @@ async function requestGuestJoin(fullName) {
     setMessage(elements.loginMessage, 'Choose a cursor color.', 'error');
     return;
   }
-  elements.btnRequestGuestJoin.disabled = true;
+  if (!state.guestNameAvailable) {
+    scheduleGuestNameAvailabilityCheck(true);
+    return;
+  }
+  state.guestJoinWaiting = true;
+  elements.txtGuestName.disabled = true;
+  updateGuestJoinButtonState();
   setMessage(elements.loginMessage, 'Sending your request to the Admin...', 'success');
   try {
     const response = await fetch('/api/guest-requests', {
@@ -1062,8 +1171,12 @@ async function requestGuestJoin(fullName) {
     setGuestWaitingState(true, pending.fullName);
     pollGuestJoinRequest(pending);
   } catch (error) {
-    elements.btnRequestGuestJoin.disabled = false;
+    state.guestJoinWaiting = false;
+    elements.txtGuestName.disabled = false;
+    state.guestNameAvailable = false;
+    updateGuestJoinButtonState();
     setMessage(elements.loginMessage, error.message, 'error');
+    scheduleGuestNameAvailabilityCheck(true);
   }
 }
 
@@ -1077,7 +1190,7 @@ async function pollGuestJoinRequest(pending) {
     const data = await response.json();
     if (!response.ok) throw new Error(data.detail || 'Unable to check the join request.');
     if (data.status === 'approved' && data.token && data.user) {
-      clearPendingGuestRequest();
+      clearPendingGuestRequest(false);
       completeAuthentication(data, 'Request approved. Joining the live editor...');
       return;
     }
@@ -1259,6 +1372,7 @@ function handleWsMessage(data) {
       updateDmRecipientDropdown();
       renderDmConversations();
       syncChatView();
+      refreshGuestNameAvailability();
       if (isSettingsDialogOpen()) loadAccessSettings();
       break;
 
@@ -1267,6 +1381,7 @@ function handleWsMessage(data) {
       if (data.active_users) state.activeUsers = data.active_users;
       updateDmRecipientDropdown();
       renderPresence();
+      refreshGuestNameAvailability();
       if (elements.dlgAdminSettings.open) {
         loadAdminGuests();
         loadAccessSettings();
@@ -1800,11 +1915,28 @@ async function openSettings() {
     elements.numTabLimit.value = state.tabLimit;
     await Promise.all([loadAdminGuests(), loadJoinRequests(), loadAccessSettings()]);
     elements.dlgAdminSettings.showModal();
+    elements.dlgAdminSettings.scrollTop = 0;
+    elements.adminSettingsScroll.scrollTop = 0;
   } else {
     await loadAccessSettings();
     elements.dlgGuestSettings.showModal();
   }
   lucide.createIcons();
+}
+
+function scrollAdminSettingsToSection(section, behavior = 'smooth') {
+  if (!section || !elements.adminSettingsScroll) return;
+  elements.dlgAdminSettings.scrollTop = 0;
+  const scrollTop = section.getBoundingClientRect().top
+    - elements.adminSettingsScroll.getBoundingClientRect().top
+    + elements.adminSettingsScroll.scrollTop;
+  elements.adminSettingsScroll.scrollTo({
+    top: Math.max(0, scrollTop),
+    behavior,
+  });
+  requestAnimationFrame(() => {
+    elements.dlgAdminSettings.scrollTop = 0;
+  });
 }
 
 function isSettingsDialogOpen() {
@@ -1971,7 +2103,7 @@ async function openJoinRequestsSettings() {
   } else {
     await loadJoinRequests();
   }
-  elements.joinRequestsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  scrollAdminSettingsToSection(elements.joinRequestsSection);
   elements.joinRequestsSection.classList.add('attention');
   setTimeout(() => elements.joinRequestsSection.classList.remove('attention'), 1400);
 }
@@ -2707,11 +2839,20 @@ function bindInterfaceEvents() {
     submitLogin('admin', { password });
   });
 
+  elements.txtGuestName.addEventListener('input', () => {
+    setMessage(elements.loginMessage, '');
+    scheduleGuestNameAvailabilityCheck();
+  });
+
   elements.frmGuestLogin.addEventListener('submit', (event) => {
     event.preventDefault();
-    const fullName = elements.txtGuestName.value.trim();
+    const fullName = normalizeGuestNameInput(elements.txtGuestName.value);
     if (!fullName) {
       setMessage(elements.loginMessage, 'Enter your name before requesting access.', 'error');
+      return;
+    }
+    if (!state.guestNameAvailable) {
+      scheduleGuestNameAvailabilityCheck(true);
       return;
     }
     requestGuestJoin(fullName);

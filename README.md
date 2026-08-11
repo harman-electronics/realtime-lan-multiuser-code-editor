@@ -5,15 +5,15 @@ line ownership, Admin-approved Guest access, chat, appearance controls, and
 host-side code execution. Changes, presence, messages, permissions, and file
 updates are synchronized for connected users in real time.
 
-## Version 4.1 — Interactive Input Terminal
+## Version 4.2 — Guest Name Validation and Interface Corrections
 
-Version 4.1 replaces the saved pre-run input box with a live terminal. Start a
-Python or C++ program, respond when it asks for input, and continue entering
-values one line at a time without restarting it. Output, errors, and prompts
-stream into the terminal while the program is running, and a Stop button ends
-the current user's process. Version 4.1 retains the Admin-approved Guest
-workflow, collaboration, messaging, appearance system, and ownership fix from
-Version 4.0.
+Version 4.2 checks a Guest's chosen name before a join request can be sent.
+Names already used by active participants are marked in red, and **Request to
+join** stays disabled until the Guest enters an available name. This release
+also keeps the Admin Settings header and close button visible when opened from
+a notification, centres compact toolbar actions inside their click targets,
+and replaces the Wi-Fi sharing file icon with a QR-code icon. Collaboration and
+code-execution behaviour remain unchanged.
 
 Read the [changelog](CHANGELOG.md) for the complete feature history, detailed
 changes, security notes, and previous releases.
@@ -31,22 +31,22 @@ changes, security notes, and previous releases.
 > execution sandbox. Every person allowed to run code on the host must be
 > trusted.
 
-### Version 4.1 light theme and interactive terminal
+### Version 4.2 light theme and interactive terminal
 
-![Version 4.1 light theme with the interactive Python terminal](docs/images/version-4.1-default-light.png)
+![Version 4.2 light theme with the interactive Python terminal and QR sharing shortcut](docs/images/version-4.2-default-light.png)
 
-### Version 4.1 dark theme and interactive terminal
+### Version 4.2 dark theme and interactive terminal
 
-![Version 4.1 dark theme with the interactive Python terminal](docs/images/version-4.1-default-dark.png)
+![Version 4.2 dark theme with the interactive Python terminal and QR sharing shortcut](docs/images/version-4.2-default-dark.png)
 
-### Version 4.1 dark theme with a fitted wallpaper
+### Version 4.2 dark theme with a fitted wallpaper
 
-![Version 4.1 dark theme with a fitted local wallpaper](docs/images/version-4.1-wallpaper-dark-fit.png)
+![Version 4.2 dark theme with a fitted local wallpaper and QR sharing shortcut](docs/images/version-4.2-wallpaper-dark-fit.png)
 
 The wallpaper example uses **Fit**, **5% background dimming**, **98% wallpaper
 visibility**, and **2px panel blur**. Wallpaper images and appearance settings
 are saved only in the current browser on that PC and are not synchronized. All
-three screenshots above were captured from the working Version 4.1 interface;
+three screenshots above were captured from the working Version 4.2 interface;
 the terminal shows submitted input in blue and successful status messages in
 yellow, while red is reserved for errors and failed limits.
 
@@ -185,7 +185,7 @@ operating-system-specific packages may need additional host configuration.
 
 ## Testing
 
-Version 4.1 passed **19/19 permanent automated tests** and **12/12 Python/C++
+Version 4.2 passed **19/19 permanent automated tests** and **12/12 Python/C++
 execution-matrix tests**, including live Python and C++ terminal input, stopping
 a waiting process, Guest approval, permissions, messaging, imports, loops,
 functions, recursion, classes, errors, timeouts, Unicode, and real C++17 STL

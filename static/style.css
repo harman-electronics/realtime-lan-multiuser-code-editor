@@ -1614,6 +1614,36 @@ body.is-resizing {
   animation: formSlideIn 0.22s ease;
 }
 
+.guest-name-availability {
+  display: block;
+  min-height: 18px;
+  margin-top: 6px;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.guest-name-availability.checking {
+  color: var(--text-secondary);
+}
+
+.guest-name-availability.available {
+  color: var(--success-color);
+}
+
+.guest-name-availability.unavailable {
+  color: var(--danger-color);
+}
+
+#txtGuestName[aria-invalid="true"] {
+  border-color: var(--danger-color);
+}
+
+#btnRequestGuestJoin:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 @keyframes formSlideIn {
   from { opacity: 0; transform: translateX(10px); }
   to { opacity: 1; transform: translateX(0); }
@@ -1693,7 +1723,33 @@ body.is-resizing {
   max-width: none;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
   box-sizing: border-box;
+}
+
+.settings-dialog-card > .dialog-header {
+  flex: 0 0 auto;
+  padding-right: 52px;
+}
+
+.settings-dialog-close {
+  z-index: 4;
+  display: inline-grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  padding: 0;
+  border-radius: 12px;
+  background: var(--bg-secondary);
+  background: color-mix(in srgb, var(--bg-secondary) 72%, transparent);
+}
+
+.settings-dialog-close:hover,
+.settings-dialog-close:focus-visible {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+  outline: 2px solid color-mix(in srgb, var(--accent-color) 70%, transparent);
+  outline-offset: 2px;
 }
 
 #dlgAdminSettings {
@@ -1705,6 +1761,7 @@ body.is-resizing {
   max-height: 94dvh;
   resize: both;
   overflow: hidden;
+  overscroll-behavior: contain;
   box-sizing: border-box;
 }
 
@@ -1720,6 +1777,8 @@ body.is-resizing {
   min-height: 0;
   max-height: none;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   padding-right: 5px;
 }
 
@@ -2675,6 +2734,10 @@ button.rail-button:hover {
 .toolbar-icon-action {
   width: 42px;
   height: 42px;
+  min-width: 42px;
+  flex: 0 0 42px;
+  justify-content: center;
+  gap: 0;
   padding: 0;
   border-radius: 50%;
   color: var(--text-secondary);
@@ -2685,6 +2748,10 @@ button.rail-button:hover {
 .toolbar-icon-action:hover {
   color: var(--accent-color);
   background: var(--surface-soft);
+}
+
+.toolbar-icon-action svg {
+  margin: 0;
 }
 
 .toolbar-decoration {
