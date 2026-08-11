@@ -231,6 +231,18 @@ class LiveEditorTestCase(unittest.TestCase):
             self.assertEqual(notification["pending_count"], 1)
             self.assertEqual(notification["request"]["id"], request["request_id"])
 
+        static_directory = Path(app_module.STATIC_DIR)
+        html = (static_directory / "index.html").read_text(encoding="utf-8")
+        javascript = (static_directory / "app.js").read_text(encoding="utf-8")
+        stylesheet = (static_directory / "style.css").read_text(encoding="utf-8")
+        self.assertIn('id="adminSettingsScroll"', html)
+        self.assertIn('aria-label="Close Admin Settings"', html)
+        self.assertIn("scrollAdminSettingsToSection", javascript)
+        self.assertIn("elements.dlgAdminSettings.scrollTop = 0", javascript)
+        self.assertNotIn("joinRequestsSection.scrollIntoView", javascript)
+        self.assertIn(".settings-dialog-close", stylesheet)
+        self.assertIn("scrollbar-gutter: stable", stylesheet)
+
     def test_manual_student_creation_is_removed_and_admin_can_remove_guest(self):
         admin_token = self.login_admin()
         old_add = self.client.post(

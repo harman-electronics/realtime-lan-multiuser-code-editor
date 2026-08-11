@@ -1693,7 +1693,33 @@ body.is-resizing {
   max-width: none;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
   box-sizing: border-box;
+}
+
+.settings-dialog-card > .dialog-header {
+  flex: 0 0 auto;
+  padding-right: 52px;
+}
+
+.settings-dialog-close {
+  z-index: 4;
+  display: inline-grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  padding: 0;
+  border-radius: 12px;
+  background: var(--bg-secondary);
+  background: color-mix(in srgb, var(--bg-secondary) 72%, transparent);
+}
+
+.settings-dialog-close:hover,
+.settings-dialog-close:focus-visible {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+  outline: 2px solid color-mix(in srgb, var(--accent-color) 70%, transparent);
+  outline-offset: 2px;
 }
 
 #dlgAdminSettings {
@@ -1705,6 +1731,7 @@ body.is-resizing {
   max-height: 94dvh;
   resize: both;
   overflow: hidden;
+  overscroll-behavior: contain;
   box-sizing: border-box;
 }
 
@@ -1720,6 +1747,8 @@ body.is-resizing {
   min-height: 0;
   max-height: none;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   padding-right: 5px;
 }
 

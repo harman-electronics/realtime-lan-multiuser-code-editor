@@ -104,6 +104,7 @@ const elements = {
   btnSettings: $('btnSettings'),
   settingsButtonLabel: $('settingsButtonLabel'),
   dlgAdminSettings: $('dlgAdminSettings'),
+  adminSettingsScroll: $('adminSettingsScroll'),
   btnCloseAdminSettings: $('btnCloseAdminSettings'),
   btnAdminAppearance: $('btnAdminAppearance'),
   txtAdminDisplayName: $('txtAdminDisplayName'),
@@ -1800,11 +1801,28 @@ async function openSettings() {
     elements.numTabLimit.value = state.tabLimit;
     await Promise.all([loadAdminGuests(), loadJoinRequests(), loadAccessSettings()]);
     elements.dlgAdminSettings.showModal();
+    elements.dlgAdminSettings.scrollTop = 0;
+    elements.adminSettingsScroll.scrollTop = 0;
   } else {
     await loadAccessSettings();
     elements.dlgGuestSettings.showModal();
   }
   lucide.createIcons();
+}
+
+function scrollAdminSettingsToSection(section, behavior = 'smooth') {
+  if (!section || !elements.adminSettingsScroll) return;
+  elements.dlgAdminSettings.scrollTop = 0;
+  const scrollTop = section.getBoundingClientRect().top
+    - elements.adminSettingsScroll.getBoundingClientRect().top
+    + elements.adminSettingsScroll.scrollTop;
+  elements.adminSettingsScroll.scrollTo({
+    top: Math.max(0, scrollTop),
+    behavior,
+  });
+  requestAnimationFrame(() => {
+    elements.dlgAdminSettings.scrollTop = 0;
+  });
 }
 
 function isSettingsDialogOpen() {
@@ -1971,7 +1989,7 @@ async function openJoinRequestsSettings() {
   } else {
     await loadJoinRequests();
   }
-  elements.joinRequestsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  scrollAdminSettingsToSection(elements.joinRequestsSection);
   elements.joinRequestsSection.classList.add('attention');
   setTimeout(() => elements.joinRequestsSection.classList.remove('attention'), 1400);
 }
