@@ -196,6 +196,19 @@ class LiveEditorTestCase(unittest.TestCase):
 
     def test_guest_request_rejection_and_secret_validation(self):
         request = self.request_guest("Rejected Guest")
+        pending_name = self.client.get(
+            "/api/guest-name-availability",
+            params={"full_name": "  rejected   guest  "},
+        )
+        self.assertEqual(pending_name.status_code, 200)
+        self.assertFalse(pending_name.json()["available"])
+        self.assertEqual(pending_name.json()["reason"], "pending")
+        duplicate_request = self.client.post(
+            "/api/guest-requests",
+            json={"full_name": "REJECTED GUEST"},
+        )
+        self.assertEqual(duplicate_request.status_code, 409)
+
         hidden = self.client.get(
             f"/api/guest-requests/{request['request_id']}/status",
             params={"request_token": "wrong-secret"},
@@ -246,6 +259,12 @@ class LiveEditorTestCase(unittest.TestCase):
         self.assertIn(".toolbar-icon-action", stylesheet)
         self.assertIn("flex: 0 0 42px", stylesheet)
         self.assertIn("justify-content: center", stylesheet)
+        self.assertIn('id="guestNameAvailability"', html)
+        self.assertIn('id="btnRequestGuestJoin" type="submit" disabled', html)
+        self.assertIn("/api/guest-name-availability", javascript)
+        self.assertIn("scheduleGuestNameAvailabilityCheck", javascript)
+        self.assertIn(".guest-name-availability.unavailable", stylesheet)
+        self.assertIn('#txtGuestName[aria-invalid="true"]', stylesheet)
 
     def test_manual_student_creation_is_removed_and_admin_can_remove_guest(self):
         admin_token = self.login_admin()
@@ -278,6 +297,13 @@ class LiveEditorTestCase(unittest.TestCase):
 
     def test_only_one_active_guest_session(self):
         admitted = self.approve_guest("John Smith")
+        offline_name = self.client.get(
+            "/api/guest-name-availability",
+            params={"full_name": "john smith"},
+        )
+        self.assertEqual(offline_name.status_code, 200)
+        self.assertTrue(offline_name.json()["available"])
+
         with self.client.websocket_connect("/ws/john_first") as websocket:
             self.assertEqual(websocket.receive_json()["type"], "init")
             websocket.send_json(
@@ -290,13 +316,28 @@ class LiveEditorTestCase(unittest.TestCase):
             self.assertEqual(websocket.receive_json()["type"], "join_success")
             self.assertEqual(websocket.receive_json()["type"], "presence_updated")
 
-            duplicate_request = self.request_guest("John Smith")
-            duplicate_approval = self.client.post(
-                f"/api/join-requests/{duplicate_request['request_id']}/approve",
-                headers=self.auth_header(self.login_admin()),
+            active_name = self.client.get(
+                "/api/guest-name-availability",
+                params={"full_name": "  JOHN   SMITH "},
             )
-            self.assertEqual(duplicate_approval.status_code, 409)
-            self.assertIn("active session", duplicate_approval.json()["detail"])
+            self.assertEqual(active_name.status_code, 200)
+            self.assertFalse(active_name.json()["available"])
+            self.assertEqual(active_name.json()["reason"], "active")
+            self.assertIn("Name taken", active_name.json()["message"])
+
+            duplicate_request = self.client.post(
+                "/api/guest-requests",
+                json={"full_name": "John Smith"},
+            )
+            self.assertEqual(duplicate_request.status_code, 409)
+            self.assertIn("Name taken", duplicate_request.json()["detail"])
+
+        available_after_disconnect = self.client.get(
+            "/api/guest-name-availability",
+            params={"full_name": "John Smith"},
+        )
+        self.assertEqual(available_after_disconnect.status_code, 200)
+        self.assertTrue(available_after_disconnect.json()["available"])
 
     def test_admin_file_tabs_and_fifteen_tab_limit(self):
         admin_token = self.login_admin()

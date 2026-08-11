@@ -454,17 +454,59 @@ class ConnectionManager:
             if request.get("status") == "pending"
         ]
 
-    def create_guest_join_request(self, full_name: str) -> Dict[str, Any]:
+    def guest_name_availability(self, full_name: str) -> Dict[str, Any]:
         name = normalize_display_name(full_name)
+        normalized_name = name.casefold()
         self.expire_join_requests()
-        if any(
-            request.get("status") == "pending"
-            and str(request.get("full_name", "")).casefold() == name.casefold()
-            for request in self.join_requests
-        ):
+
+        active_user = next(
+            (
+                user
+                for user in self.user_data.values()
+                if user.get("username")
+                and str(user["username"]).casefold() == normalized_name
+            ),
+            None,
+        )
+        if active_user:
+            return {
+                "available": False,
+                "full_name": name,
+                "reason": "active",
+                "message": "Name taken. An active participant is already using this name.",
+            }
+
+        pending_request = next(
+            (
+                request
+                for request in self.join_requests
+                if request.get("status") == "pending"
+                and str(request.get("full_name", "")).casefold() == normalized_name
+            ),
+            None,
+        )
+        if pending_request:
+            return {
+                "available": False,
+                "full_name": name,
+                "reason": "pending",
+                "message": f"A join request for {name} is already waiting for Admin approval.",
+            }
+
+        return {
+            "available": True,
+            "full_name": name,
+            "reason": "available",
+            "message": "Name is available.",
+        }
+
+    def create_guest_join_request(self, full_name: str) -> Dict[str, Any]:
+        availability = self.guest_name_availability(full_name)
+        name = availability["full_name"]
+        if not availability["available"]:
             raise HTTPException(
                 status_code=409,
-                detail=f"A join request for {name} is already waiting for Admin approval.",
+                detail=availability["message"],
             )
         pending_count = sum(
             request.get("status") == "pending"
@@ -1714,6 +1756,11 @@ async def create_guest_request(
         "status": join_request["status"],
         "full_name": join_request["full_name"],
     }
+
+
+@app.get("/api/guest-name-availability")
+async def get_guest_name_availability(full_name: str) -> Dict[str, Any]:
+    return manager.guest_name_availability(full_name)
 
 
 @app.get("/api/guest-requests/{request_id}/status")

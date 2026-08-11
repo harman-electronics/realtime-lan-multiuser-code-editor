@@ -21,7 +21,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/addon/edit/matchbrackets.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/addon/selection/active-line.min.js"></script>
 
-  <link rel="stylesheet" href="/static/style.css?v=4.1.1-ui-polish-1" />
+  <link rel="stylesheet" href="/static/style.css?v=4.2-guest-name-validation-1" />
 </head>
 <body>
   <div id="toastContainer" class="toast-container" aria-live="polite"></div>
@@ -248,9 +248,10 @@
         <button class="back-link" id="btnBackFromGuest" type="button"><i data-lucide="arrow-left"></i> Back</button>
         <div class="form-group">
           <label for="txtGuestName">Your full name</label>
-          <input type="text" id="txtGuestName" class="custom-input" maxlength="50" autocomplete="name" placeholder="For example, Bob" required />
+          <input type="text" id="txtGuestName" class="custom-input" maxlength="50" autocomplete="name" placeholder="For example, Bob" aria-describedby="guestNameAvailability" required />
+          <small id="guestNameAvailability" class="guest-name-availability" aria-live="polite"></small>
         </div>
-        <button class="btn btn-primary btn-block" id="btnRequestGuestJoin" type="submit"><i data-lucide="send"></i> Request to join</button>
+        <button class="btn btn-primary btn-block" id="btnRequestGuestJoin" type="submit" disabled><i data-lucide="send"></i> Request to join</button>
       </form>
 
       <div id="loginColorSection" class="login-color-section" style="display:none;">
@@ -530,6 +531,6 @@
     </div>
   </dialog>
 
-  <script src="/static/app.js?v=4.1.1-ui-polish-1"></script>
+  <script src="/static/app.js?v=4.2-guest-name-validation-1"></script>
 </body>
 </html>

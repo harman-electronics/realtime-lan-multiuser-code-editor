@@ -1614,6 +1614,36 @@ body.is-resizing {
   animation: formSlideIn 0.22s ease;
 }
 
+.guest-name-availability {
+  display: block;
+  min-height: 18px;
+  margin-top: 6px;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.guest-name-availability.checking {
+  color: var(--text-secondary);
+}
+
+.guest-name-availability.available {
+  color: var(--success-color);
+}
+
+.guest-name-availability.unavailable {
+  color: var(--danger-color);
+}
+
+#txtGuestName[aria-invalid="true"] {
+  border-color: var(--danger-color);
+}
+
+#btnRequestGuestJoin:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 @keyframes formSlideIn {
   from { opacity: 0; transform: translateX(10px); }
   to { opacity: 1; transform: translateX(0); }
