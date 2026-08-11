@@ -242,6 +242,10 @@ class LiveEditorTestCase(unittest.TestCase):
         self.assertNotIn("joinRequestsSection.scrollIntoView", javascript)
         self.assertIn(".settings-dialog-close", stylesheet)
         self.assertIn("scrollbar-gutter: stable", stylesheet)
+        self.assertIn('<i data-lucide="qr-code"></i>', html)
+        self.assertIn(".toolbar-icon-action", stylesheet)
+        self.assertIn("flex: 0 0 42px", stylesheet)
+        self.assertIn("justify-content: center", stylesheet)
 
     def test_manual_student_creation_is_removed_and_admin_can_remove_guest(self):
         admin_token = self.login_admin()

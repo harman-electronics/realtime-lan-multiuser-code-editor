@@ -2704,6 +2704,10 @@ button.rail-button:hover {
 .toolbar-icon-action {
   width: 42px;
   height: 42px;
+  min-width: 42px;
+  flex: 0 0 42px;
+  justify-content: center;
+  gap: 0;
   padding: 0;
   border-radius: 50%;
   color: var(--text-secondary);
@@ -2714,6 +2718,10 @@ button.rail-button:hover {
 .toolbar-icon-action:hover {
   color: var(--accent-color);
   background: var(--surface-soft);
+}
+
+.toolbar-icon-action svg {
+  margin: 0;
 }
 
 .toolbar-decoration {
