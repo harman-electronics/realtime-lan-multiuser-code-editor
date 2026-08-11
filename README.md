@@ -5,15 +5,14 @@ line ownership, Admin-approved Guest access, chat, appearance controls, and
 host-side code execution. Changes, presence, messages, permissions, and file
 updates are synchronized for connected users in real time.
 
-## Version 4.1 — Interactive Input Terminal
+## Version 4.1.1 — Interface Corrections
 
-Version 4.1 replaces the saved pre-run input box with a live terminal. Start a
-Python or C++ program, respond when it asks for input, and continue entering
-values one line at a time without restarting it. Output, errors, and prompts
-stream into the terminal while the program is running, and a Stop button ends
-the current user's process. Version 4.1 retains the Admin-approved Guest
-workflow, collaboration, messaging, appearance system, and ownership fix from
-Version 4.0.
+Version 4.1.1 is a corrective update for the Version 4.1 interactive terminal
+release. It keeps the Admin Settings header and close button visible when Join
+Requests is opened from a notification, centres compact toolbar action icons
+inside their click targets, and gives Wi-Fi sharing a clearer QR-code icon. The
+live Python/C++ terminal, Guest approval, collaboration, messaging, appearance
+system, and ownership controls remain unchanged.
 
 Read the [changelog](CHANGELOG.md) for the complete feature history, detailed
 changes, security notes, and previous releases.
@@ -185,7 +184,7 @@ operating-system-specific packages may need additional host configuration.
 
 ## Testing
 
-Version 4.1 passed **19/19 permanent automated tests** and **12/12 Python/C++
+Version 4.1.1 passed **19/19 permanent automated tests** and **12/12 Python/C++
 execution-matrix tests**, including live Python and C++ terminal input, stopping
 a waiting process, Guest approval, permissions, messaging, imports, loops,
 functions, recursion, classes, errors, timeouts, Unicode, and real C++17 STL

@@ -3,6 +3,32 @@
 All notable changes to the Real-Time LAN Multiuser Code Editor will be recorded
 in this file.
 
+## Version 4.1.1 — Interface Corrections
+
+Version 4.1.1 groups three small interface corrections for the Version 4.1
+workspace without changing its collaboration or execution behaviour.
+
+### Fixed and changed
+
+- Fixed the Admin notification shortcut scrolling the entire Settings dialog
+  upward and hiding its header and close button.
+- Join Requests now scrolls only inside the settings content area while the
+  dialog header remains fixed and the close control stays visible.
+- Improved the Admin Settings overflow, scrollbar stability, close-button hit
+  area, keyboard focus style, and accessible label at compact window sizes.
+- Centred the Save Snapshot and Copy Code icons inside stable 42px circular
+  hover and click targets.
+- Replaced the generic file icon for **Share WiFi connection** with a QR-code
+  icon that better represents the action.
+- Updated the CSS and JavaScript cache identifiers so upgrading users receive
+  the corrected interface after restarting and pressing `Ctrl+F5`.
+
+### Verification
+
+- Extended the permanent notification test with Admin Settings, toolbar
+  alignment, and QR-icon regression checks.
+- Re-ran all 19 permanent tests and the 12-case Python/C++ execution matrix.
+
 ## Version 4.1 — Interactive Input Terminal
 
 Version 4.1 replaces the saved input-before-run workflow with a live terminal
@@ -35,15 +61,6 @@ for Python and C++ programs.
 - Updated local CSS and JavaScript cache identifiers for Version 4.1. Users
   upgrading from an earlier release should restart the server and press
   `Ctrl+F5`.
-
-### Fixed
-
-- Fixed the Admin notification shortcut scrolling the entire Settings dialog
-  upward and hiding its header and close button.
-- Join Requests now scrolls only inside the settings content area while the
-  dialog header remains fixed and the close control stays visible.
-- Improved the Admin Settings overflow, scrollbar stability, close-button hit
-  area, keyboard focus style, and accessible label at compact window sizes.
 
 ### Verification
 
