@@ -5,14 +5,15 @@ line ownership, Admin-approved Guest access, chat, appearance controls, and
 host-side code execution. Changes, presence, messages, permissions, and file
 updates are synchronized for connected users in real time.
 
-## Version 4.1.1 — Interface Corrections
+## Version 4.2 — Guest Name Validation and Interface Corrections
 
-Version 4.1.1 is a corrective update for the Version 4.1 interactive terminal
-release. It keeps the Admin Settings header and close button visible when Join
-Requests is opened from a notification, centres compact toolbar action icons
-inside their click targets, and gives Wi-Fi sharing a clearer QR-code icon. The
-live Python/C++ terminal, Guest approval, collaboration, messaging, appearance
-system, and ownership controls remain unchanged.
+Version 4.2 checks a Guest's chosen name before a join request can be sent.
+Names already used by active participants are marked in red, and **Request to
+join** stays disabled until the Guest enters an available name. This release
+also keeps the Admin Settings header and close button visible when opened from
+a notification, centres compact toolbar actions inside their click targets,
+and replaces the Wi-Fi sharing file icon with a QR-code icon. Collaboration and
+code-execution behaviour remain unchanged.
 
 Read the [changelog](CHANGELOG.md) for the complete feature history, detailed
 changes, security notes, and previous releases.
@@ -184,7 +185,7 @@ operating-system-specific packages may need additional host configuration.
 
 ## Testing
 
-Version 4.1.1 passed **19/19 permanent automated tests** and **12/12 Python/C++
+Version 4.2 passed **19/19 permanent automated tests** and **12/12 Python/C++
 execution-matrix tests**, including live Python and C++ terminal input, stopping
 a waiting process, Guest approval, permissions, messaging, imports, loops,
 functions, recursion, classes, errors, timeouts, Unicode, and real C++17 STL

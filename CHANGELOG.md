@@ -3,10 +3,25 @@
 All notable changes to the Real-Time LAN Multiuser Code Editor will be recorded
 in this file.
 
-## Version 4.1.1 — Interface Corrections
+## Version 4.2 — Guest Name Validation and Interface Corrections
 
-Version 4.1.1 groups three small interface corrections for the Version 4.1
-workspace without changing its collaboration or execution behaviour.
+Version 4.2 adds Guest-name validation and groups three interface corrections
+for the Version 4.1 workspace without changing its collaboration or execution
+behaviour.
+
+### Added
+
+- Added a live, case-insensitive availability check while a Guest enters their
+  name.
+- Displayed a green availability message for a valid name and a red **Name
+  taken** message when an active participant already uses it.
+- Kept **Request to join** disabled while the name is empty, being checked,
+  already active, or already attached to a pending join request.
+- Rechecked availability on the server when the request is submitted, preventing
+  duplicate active names even if two requests are attempted at nearly the same
+  time.
+- Refreshed the form automatically when participant presence changes, while
+  allowing an approved but offline Guest to request access again.
 
 ### Fixed and changed
 
@@ -21,13 +36,21 @@ workspace without changing its collaboration or execution behaviour.
 - Replaced the generic file icon for **Share WiFi connection** with a QR-code
   icon that better represents the action.
 - Updated the CSS and JavaScript cache identifiers so upgrading users receive
-  the corrected interface after restarting and pressing `Ctrl+F5`.
+  the Version 4.2 interface after restarting and pressing `Ctrl+F5`.
 
 ### Verification
 
-- Extended the permanent notification test with Admin Settings, toolbar
+- Extended the permanent Guest and notification tests with active-name,
+  pending-name, server-enforcement, disabled-button, Admin Settings, toolbar
   alignment, and QR-icon regression checks.
 - Re-ran all 19 permanent tests and the 12-case Python/C++ execution matrix.
+
+### Main components changed
+
+- `app.py`: Guest-name availability API and request-time enforcement.
+- `static/index.html`, `static/app.js`, and `static/style.css`: Guest form
+  feedback, button state, presence refresh, interface fixes, and cache update.
+- `test_app.py`: Version 4.2 regression coverage.
 
 ## Version 4.1 — Interactive Input Terminal
 
