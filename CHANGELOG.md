@@ -36,6 +36,15 @@ for Python and C++ programs.
   upgrading from an earlier release should restart the server and press
   `Ctrl+F5`.
 
+### Fixed
+
+- Fixed the Admin notification shortcut scrolling the entire Settings dialog
+  upward and hiding its header and close button.
+- Join Requests now scrolls only inside the settings content area while the
+  dialog header remains fixed and the close control stays visible.
+- Improved the Admin Settings overflow, scrollbar stability, close-button hit
+  area, keyboard focus style, and accessible label at compact window sizes.
+
 ### Verification
 
 - Added live WebSocket tests for two separate Python `input()` prompts, C++
