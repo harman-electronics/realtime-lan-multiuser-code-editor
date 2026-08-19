@@ -915,6 +915,7 @@ class LiveEditorTestCase(unittest.TestCase):
         self.assertIn("line-typing-badge-dot", javascript)
         self.assertIn("`${data.username}${data.role === 'admin' ? ' ♛' : ''} is typing`", javascript)
         self.assertIn("removeRemoteLineTypingIndicator", javascript)
+        self.assertIn("placeRemoteLineTypingBadge", javascript)
         self.assertIn("clearAllRemoteLineTypingIndicators", javascript)
         self.assertIn("removeInactiveLineTypingIndicators", javascript)
         self.assertIn("stopLocalTyping", javascript)
@@ -922,7 +923,9 @@ class LiveEditorTestCase(unittest.TestCase):
         self.assertIn("--typing-color", stylesheet)
         self.assertIn(".line-typing-badge-label", stylesheet)
         self.assertIn("margin-left: 3ch;", stylesheet)
-        self.assertIn("4.2.1-line-typing-labels-2", html)
+        self.assertIn(".remote-cursor > .line-typing-badge", stylesheet)
+        self.assertIn("left: 3ch;", stylesheet)
+        self.assertIn("4.2.1-line-typing-labels-3", html)
 
 
 if __name__ == "__main__":

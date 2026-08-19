@@ -14,8 +14,10 @@ typing highlight without restoring the old floating cursor-name cloud.
   remote participant is editing.
 - Positioned the label three character spaces after the participant's caret so
   the caret stays clearly visible before the name.
-- Kept each label inline after the line's code so it does not cover the source
-  text, with long names shortened visually when space is limited.
+- Combined the caret and typing label into one remote-cursor element so
+  CodeMirror cannot place the name before the caret.
+- Kept each label compact and non-interactive, with long names shortened
+  visually when space is limited.
 - Preserved the subtle full-line colour highlight and name-free remote caret.
 - Ensured one current typing label per participant and removed stale labels when
   that participant stops, changes lines or files, disconnects, or becomes

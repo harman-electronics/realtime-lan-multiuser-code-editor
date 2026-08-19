@@ -394,10 +394,21 @@ body {
 
 /* CodeMirror remote presence overlays */
 .remote-cursor {
+  display: inline-block;
   position: absolute;
+  width: 0;
   border-left: 2px solid;
   height: 1.2em;
+  overflow: visible;
   z-index: 100;
+}
+
+.remote-cursor > .line-typing-badge {
+  position: absolute;
+  top: 50%;
+  left: 3ch;
+  margin-left: 0;
+  transform: translateY(-50%);
 }
 /* Output Drawer */
 .output-drawer {

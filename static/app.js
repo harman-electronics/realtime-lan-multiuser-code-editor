@@ -1778,30 +1778,36 @@ function safeColor(value) {
 }
 
 function renderRemoteCursor(data) {
-  removeRemoteCursor(data.id);
+  const cursorId = String(data.id || 'unknown');
+  removeRemoteCursor(cursorId);
   if (!data.cursor || !data.username || data.file_id !== state.activeFileId) return;
   const cursor = document.createElement('span');
   cursor.className = 'remote-cursor';
   cursor.style.borderColor = safeColor(data.color);
 
-  cursor.classList.toggle('is-typing', state.typingUsers.has(data.id));
+  cursor.classList.toggle('is-typing', state.typingUsers.has(cursorId));
 
   const marker = state.editor.setBookmark(data.cursor, {
     widget: cursor,
     insertLeft: true,
   });
-  state.remoteCursors.set(data.id, {
+  state.remoteCursors.set(cursorId, {
     marker,
     element: cursor,
     fileId: data.file_id,
+    position: data.cursor,
   });
+  placeRemoteLineTypingBadge(cursorId);
 }
 
 function removeRemoteCursor(id) {
-  const cursor = state.remoteCursors.get(id);
+  const cursorId = String(id || 'unknown');
+  const cursor = state.remoteCursors.get(cursorId);
   if (cursor) {
+    const indicator = state.lineTypingIndicators.get(cursorId);
+    if (indicator?.badge?.parentElement === cursor.element) indicator.badge.remove();
     cursor.marker.clear();
-    state.remoteCursors.delete(id);
+    state.remoteCursors.delete(cursorId);
   }
 }
 
@@ -1810,9 +1816,10 @@ function clearAllRemoteCursors() {
 }
 
 function updateTypingState(data) {
-  if (data.is_typing) state.typingUsers.add(data.id);
-  else state.typingUsers.delete(data.id);
-  const remote = state.remoteCursors.get(data.id);
+  const participantId = String(data.id || 'unknown');
+  if (data.is_typing) state.typingUsers.add(participantId);
+  else state.typingUsers.delete(participantId);
+  const remote = state.remoteCursors.get(participantId);
   remote?.element.classList.toggle('is-typing', Boolean(data.is_typing));
 }
 
@@ -1852,21 +1859,49 @@ function updateRemoteLineHighlight(data) {
   label.textContent = `${data.username}${data.role === 'admin' ? ' ♛' : ''} is typing`;
   badge.append(dot, label);
 
-  const marker = state.editor.setBookmark(
-    { line: requestedLine, ch: (state.editor.getLine(requestedLine) || '').length },
-    { widget: badge, insertLeft: false },
-  );
-  const timeout = setTimeout(
+  const indicator = {
+    badge,
+    className,
+    fileId: data.file_id,
+    line: requestedLine,
+    lineHandle,
+    marker: null,
+    timeout: null,
+  };
+  state.lineTypingIndicators.set(indicatorId, indicator);
+  placeRemoteLineTypingBadge(indicatorId);
+  indicator.timeout = setTimeout(
     () => removeRemoteLineTypingIndicator(indicatorId),
     1700,
   );
-  state.lineTypingIndicators.set(indicatorId, {
-    className,
-    fileId: data.file_id,
-    lineHandle,
-    marker,
-    timeout,
-  });
+}
+
+function placeRemoteLineTypingBadge(id) {
+  const indicatorId = String(id || 'unknown');
+  const indicator = state.lineTypingIndicators.get(indicatorId);
+  if (!indicator) return;
+
+  indicator.marker?.clear();
+  indicator.marker = null;
+  indicator.badge.remove();
+
+  const remoteCursor = state.remoteCursors.get(indicatorId);
+  if (
+    remoteCursor
+    && remoteCursor.fileId === indicator.fileId
+    && remoteCursor.position?.line === indicator.line
+  ) {
+    remoteCursor.element.appendChild(indicator.badge);
+    return;
+  }
+
+  indicator.marker = state.editor.setBookmark(
+    {
+      line: indicator.line,
+      ch: (state.editor.getLine(indicator.line) || '').length,
+    },
+    { widget: indicator.badge, insertLeft: false },
+  );
 }
 
 function removeRemoteLineTypingIndicator(id) {
@@ -1875,6 +1910,7 @@ function removeRemoteLineTypingIndicator(id) {
   if (!indicator) return;
   clearTimeout(indicator.timeout);
   indicator.marker?.clear();
+  indicator.badge?.remove();
   if (indicator.fileId === state.activeFileId && indicator.lineHandle) {
     state.editor.removeLineClass(indicator.lineHandle, 'background', indicator.className);
   }
