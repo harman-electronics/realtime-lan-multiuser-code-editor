@@ -266,6 +266,71 @@ class LiveEditorTestCase(unittest.TestCase):
         self.assertIn(".guest-name-availability.unavailable", stylesheet)
         self.assertIn('#txtGuestName[aria-invalid="true"]', stylesheet)
 
+    def test_join_requests_use_fifo_popover_queue(self):
+        admin_token = self.login_admin()
+        bob = self.request_guest("Bob")
+        sarah = self.request_guest("Sarah")
+        john = self.request_guest("John")
+
+        queue = self.client.get(
+            "/api/join-requests",
+            headers=self.auth_header(admin_token),
+        )
+        self.assertEqual(queue.status_code, 200, queue.text)
+        self.assertEqual(
+            [request["full_name"] for request in queue.json()["requests"]],
+            ["Bob", "Sarah", "John"],
+        )
+
+        out_of_order = self.client.post(
+            f"/api/join-requests/{sarah['request_id']}/approve",
+            headers=self.auth_header(admin_token),
+        )
+        self.assertEqual(out_of_order.status_code, 409, out_of_order.text)
+        self.assertIn("oldest", out_of_order.json()["detail"].lower())
+
+        accepted = self.client.post(
+            f"/api/join-requests/{bob['request_id']}/approve",
+            headers=self.auth_header(admin_token),
+        )
+        self.assertEqual(accepted.status_code, 200, accepted.text)
+        queue = self.client.get(
+            "/api/join-requests",
+            headers=self.auth_header(admin_token),
+        )
+        self.assertEqual(
+            [request["full_name"] for request in queue.json()["requests"]],
+            ["Sarah", "John"],
+        )
+
+        rejected = self.client.post(
+            f"/api/join-requests/{sarah['request_id']}/reject",
+            headers=self.auth_header(admin_token),
+        )
+        self.assertEqual(rejected.status_code, 200, rejected.text)
+        queue = self.client.get(
+            "/api/join-requests",
+            headers=self.auth_header(admin_token),
+        )
+        self.assertEqual(
+            [request["full_name"] for request in queue.json()["requests"]],
+            ["John"],
+        )
+        self.assertEqual(queue.json()["requests"][0]["id"], john["request_id"])
+
+        static_directory = Path(app_module.STATIC_DIR)
+        html = (static_directory / "index.html").read_text(encoding="utf-8")
+        javascript = (static_directory / "app.js").read_text(encoding="utf-8")
+        stylesheet = (static_directory / "style.css").read_text(encoding="utf-8")
+        self.assertIn('id="joinRequestPopover"', html)
+        self.assertIn('id="joinRequestPopoverList"', html)
+        self.assertIn("renderJoinRequestPopover", javascript)
+        self.assertIn("formatJoinRequestTime", javascript)
+        self.assertIn("Next request opens after a decision", html)
+        self.assertIn(".join-request-popover-row.is-active", stylesheet)
+        self.assertIn(".join-request-popover-row.is-queued", stylesheet)
+        self.assertIn("4.2.1-join-request-queue-2", html)
+
     def test_manual_student_creation_is_removed_and_admin_can_remove_guest(self):
         admin_token = self.login_admin()
         old_add = self.client.post(
@@ -896,7 +961,7 @@ class LiveEditorTestCase(unittest.TestCase):
         self.assertEqual(cpp_problems[0]["line"], 7)
         self.assertEqual(cpp_problems[0]["column"], 14)
 
-    def test_top_typing_banner_is_removed_but_line_highlights_remain(self):
+    def test_line_typing_labels_replace_top_banner_and_cursor_names(self):
         static_directory = Path(app_module.STATIC_DIR)
         html = (static_directory / "index.html").read_text(encoding="utf-8")
         javascript = (static_directory / "app.js").read_text(encoding="utf-8")
@@ -910,6 +975,22 @@ class LiveEditorTestCase(unittest.TestCase):
         self.assertNotIn("remote-cursor-flag", stylesheet)
         self.assertIn("typing_line_update", javascript)
         self.assertIn("updateRemoteLineHighlight", javascript)
+        self.assertIn("lineTypingIndicators: new Map()", javascript)
+        self.assertIn("line-typing-badge", javascript)
+        self.assertIn("line-typing-badge-dot", javascript)
+        self.assertIn("`${data.username}${data.role === 'admin' ? ' ♛' : ''} is typing`", javascript)
+        self.assertIn("removeRemoteLineTypingIndicator", javascript)
+        self.assertIn("placeRemoteLineTypingBadge", javascript)
+        self.assertIn("clearAllRemoteLineTypingIndicators", javascript)
+        self.assertIn("removeInactiveLineTypingIndicators", javascript)
+        self.assertIn("stopLocalTyping", javascript)
+        self.assertIn(".line-typing-badge", stylesheet)
+        self.assertIn("--typing-color", stylesheet)
+        self.assertIn(".line-typing-badge-label", stylesheet)
+        self.assertIn("margin-left: 3ch;", stylesheet)
+        self.assertIn(".remote-cursor > .line-typing-badge", stylesheet)
+        self.assertIn("left: 3ch;", stylesheet)
+        self.assertIn("4.2.1-join-request-queue-2", html)
 
 
 if __name__ == "__main__":

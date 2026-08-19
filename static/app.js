@@ -16,6 +16,8 @@ const state = {
   guests: [],
   joinRequests: [],
   joinRequestCount: 0,
+  joinRequestPopoverOpen: false,
+  joinRequestTimeTimer: null,
   joinRequestPollTimer: null,
   guestNameAvailable: false,
   guestNameCheckSequence: 0,
@@ -26,9 +28,10 @@ const state = {
   editor: null,
   isRemoteChange: false,
   typingTimeout: null,
+  localTypingLocation: null,
   typingUsers: new Set(),
   remoteCursors: new Map(),
-  lineTypingTimeouts: new Map(),
+  lineTypingIndicators: new Map(),
   chatHistory: [],
   currentChatTab: 'group',
   activeDmAccountId: null,
@@ -79,8 +82,13 @@ const elements = {
   myUsername: $('myUsername'),
   myAdminCrown: $('myAdminCrown'),
   btnLogout: $('btnLogout'),
+  joinRequestNotificationWrap: $('joinRequestNotificationWrap'),
   btnJoinRequestNotifications: $('btnJoinRequestNotifications'),
   joinRequestNotificationCount: $('joinRequestNotificationCount'),
+  joinRequestPopover: $('joinRequestPopover'),
+  joinRequestPopoverCount: $('joinRequestPopoverCount'),
+  joinRequestPopoverList: $('joinRequestPopoverList'),
+  joinRequestQueueHint: $('joinRequestQueueHint'),
   presenceBar: $('presenceBar'),
   avatarGroup: $('avatarGroup'),
   wsStatus: $('wsStatus'),
@@ -871,24 +879,61 @@ function firstBlockedLine(startLine, endLine) {
 }
 
 function handleLocalTyping() {
-  const line = state.editor.getCursor().line;
+  const nextLocation = {
+    fileId: state.activeFileId,
+    line: state.editor.getCursor().line,
+  };
+  const previousLocation = state.localTypingLocation;
+  if (
+    previousLocation
+    && (
+      previousLocation.fileId !== nextLocation.fileId
+      || previousLocation.line !== nextLocation.line
+    )
+  ) {
+    sendWsMessage({
+      type: 'typing_line',
+      file_id: previousLocation.fileId,
+      line: previousLocation.line,
+      is_typing: false,
+    });
+  }
+  state.localTypingLocation = nextLocation;
   sendWsMessage({ type: 'typing', is_typing: true });
   sendWsMessage({
     type: 'typing_line',
-    file_id: state.activeFileId,
-    line,
+    file_id: nextLocation.fileId,
+    line: nextLocation.line,
     is_typing: true,
   });
   clearTimeout(state.typingTimeout);
   state.typingTimeout = setTimeout(() => {
+    if (state.localTypingLocation !== nextLocation) return;
     sendWsMessage({ type: 'typing', is_typing: false });
     sendWsMessage({
       type: 'typing_line',
-      file_id: state.activeFileId,
-      line,
+      file_id: nextLocation.fileId,
+      line: nextLocation.line,
       is_typing: false,
     });
+    state.localTypingLocation = null;
   }, 1200);
+}
+
+function stopLocalTyping() {
+  clearTimeout(state.typingTimeout);
+  state.typingTimeout = null;
+  const location = state.localTypingLocation;
+  if (location) {
+    sendWsMessage({
+      type: 'typing_line',
+      file_id: location.fileId,
+      line: location.line,
+      is_typing: false,
+    });
+  }
+  sendWsMessage({ type: 'typing', is_typing: false });
+  state.localTypingLocation = null;
 }
 
 async function fetchAppInfo() {
@@ -1241,8 +1286,8 @@ function updateSignedInUI() {
   elements.myAvatar.style.backgroundColor = safeColor(state.color);
   elements.myUsername.textContent = state.user.username;
   elements.myAdminCrown.style.display = state.user.role === 'admin' ? 'inline' : 'none';
-  elements.btnJoinRequestNotifications.style.display = state.user.role === 'admin'
-    ? 'inline-grid'
+  elements.joinRequestNotificationWrap.style.display = state.user.role === 'admin'
+    ? 'inline-flex'
     : 'none';
   elements.btnSettings.style.display = 'inline-flex';
   elements.settingsButtonLabel.textContent = state.user.role === 'admin' ? 'Admin Settings' : 'Your Code Access';
@@ -1295,6 +1340,10 @@ function initializeWebSocket() {
     const programWasRunning = state.terminalRunning;
     state.socketReady = false;
     state.joined = false;
+    state.localTypingLocation = null;
+    state.typingUsers.clear();
+    clearAllRemoteCursors();
+    clearAllRemoteLineTypingIndicators();
     setTerminalRunning(false, false);
     if (programWasRunning) {
       appendTerminalOutput('\n[Connection closed. The running program was stopped.]\n', 'stderr');
@@ -1372,6 +1421,7 @@ function handleWsMessage(data) {
       updateDmRecipientDropdown();
       renderDmConversations();
       syncChatView();
+      removeInactiveLineTypingIndicators();
       refreshGuestNameAvailability();
       if (isSettingsDialogOpen()) loadAccessSettings();
       break;
@@ -1399,7 +1449,7 @@ function handleWsMessage(data) {
     case 'join_requests_updated':
       if (state.user?.role !== 'admin') break;
       updateJoinRequestCount(data.pending_count || 0);
-      if (elements.dlgAdminSettings.open) loadJoinRequests();
+      loadJoinRequests();
       break;
 
     case 'workspace_updated':
@@ -1529,6 +1579,7 @@ function handleWsMessage(data) {
 
 function applyWorkspace(workspace, allLineAuthors) {
   if (!workspace) return;
+  clearAllRemoteLineTypingIndicators();
   const previousActive = state.activeFileId;
   state.files = workspace.files || [];
   state.tabLimit = workspace.tab_limit || 6;
@@ -1597,8 +1648,10 @@ function switchFile(fileId) {
   if (current && state.editor && !state.isRemoteChange) {
     current.code = state.editor.getValue();
   }
+  stopLocalTyping();
   state.activeFileId = fileId;
   clearAllRemoteCursors();
+  clearAllRemoteLineTypingIndicators();
   renderFileTabs();
   loadActiveFileIntoEditor();
   sendWsMessage({
@@ -1716,6 +1769,7 @@ function applyAuthoritativeFile(data) {
   state.files[index] = data.file;
   state.lineAuthors[data.file.id] = data.line_authors || {};
   if (state.activeFileId !== data.file.id) return;
+  clearAllRemoteLineTypingIndicators();
   state.isRemoteChange = true;
   state.editor.setValue(data.file.code || '');
   state.isRemoteChange = false;
@@ -1731,30 +1785,36 @@ function safeColor(value) {
 }
 
 function renderRemoteCursor(data) {
-  removeRemoteCursor(data.id);
+  const cursorId = String(data.id || 'unknown');
+  removeRemoteCursor(cursorId);
   if (!data.cursor || !data.username || data.file_id !== state.activeFileId) return;
   const cursor = document.createElement('span');
   cursor.className = 'remote-cursor';
   cursor.style.borderColor = safeColor(data.color);
 
-  cursor.classList.toggle('is-typing', state.typingUsers.has(data.id));
+  cursor.classList.toggle('is-typing', state.typingUsers.has(cursorId));
 
   const marker = state.editor.setBookmark(data.cursor, {
     widget: cursor,
     insertLeft: true,
   });
-  state.remoteCursors.set(data.id, {
+  state.remoteCursors.set(cursorId, {
     marker,
     element: cursor,
     fileId: data.file_id,
+    position: data.cursor,
   });
+  placeRemoteLineTypingBadge(cursorId);
 }
 
 function removeRemoteCursor(id) {
-  const cursor = state.remoteCursors.get(id);
+  const cursorId = String(id || 'unknown');
+  const cursor = state.remoteCursors.get(cursorId);
   if (cursor) {
+    const indicator = state.lineTypingIndicators.get(cursorId);
+    if (indicator?.badge?.parentElement === cursor.element) indicator.badge.remove();
     cursor.marker.clear();
-    state.remoteCursors.delete(id);
+    state.remoteCursors.delete(cursorId);
   }
 }
 
@@ -1763,33 +1823,116 @@ function clearAllRemoteCursors() {
 }
 
 function updateTypingState(data) {
-  if (data.is_typing) state.typingUsers.add(data.id);
-  else state.typingUsers.delete(data.id);
-  const remote = state.remoteCursors.get(data.id);
+  const participantId = String(data.id || 'unknown');
+  if (data.is_typing) state.typingUsers.add(participantId);
+  else state.typingUsers.delete(participantId);
+  const remote = state.remoteCursors.get(participantId);
   remote?.element.classList.toggle('is-typing', Boolean(data.is_typing));
 }
 
 function updateRemoteLineHighlight(data) {
-  if (data.file_id !== state.activeFileId) return;
-  const safeId = String(data.id).replace(/[^A-Za-z0-9_-]/g, '_');
-  const key = `${safeId}_${data.file_id}_${data.line}`;
-  const className = `typing-line-${safeId}`;
-  clearTimeout(state.lineTypingTimeouts.get(key));
-  state.editor.removeLineClass(data.line, 'background', className);
+  const indicatorId = String(data.id || 'unknown');
+  removeRemoteLineTypingIndicator(indicatorId);
+  if (!data.is_typing || data.file_id !== state.activeFileId || !data.username) return;
 
-  if (!data.is_typing) return;
+  const requestedLine = Number(data.line);
+  if (!Number.isInteger(requestedLine) || requestedLine < 0 || requestedLine >= state.editor.lineCount()) {
+    return;
+  }
+
+  const safeId = indicatorId.replace(/[^A-Za-z0-9_-]/g, '_');
+  const className = `typing-line-${safeId}`;
+  const color = safeColor(data.color);
   let style = document.getElementById(`typing-style-${safeId}`);
   if (!style) {
     style = document.createElement('style');
     style.id = `typing-style-${safeId}`;
     document.head.appendChild(style);
   }
-  style.textContent = `.${className} { background-color: ${hexToRgba(safeColor(data.color), 0.20)} !important; }`;
-  state.editor.addLineClass(data.line, 'background', className);
-  state.lineTypingTimeouts.set(key, setTimeout(() => {
-    state.editor.removeLineClass(data.line, 'background', className);
-    state.lineTypingTimeouts.delete(key);
-  }, 1500));
+  style.textContent = `.${className} { background-color: ${hexToRgba(color, 0.18)} !important; }`;
+  const lineHandle = state.editor.addLineClass(requestedLine, 'background', className);
+
+  const badge = document.createElement('span');
+  badge.className = 'line-typing-badge';
+  badge.style.setProperty('--typing-color', color);
+  badge.setAttribute('aria-hidden', 'true');
+  badge.title = `${data.username} is typing`;
+
+  const dot = document.createElement('span');
+  dot.className = 'line-typing-badge-dot';
+  dot.setAttribute('aria-hidden', 'true');
+  const label = document.createElement('span');
+  label.className = 'line-typing-badge-label';
+  label.textContent = `${data.username}${data.role === 'admin' ? ' ♛' : ''} is typing`;
+  badge.append(dot, label);
+
+  const indicator = {
+    badge,
+    className,
+    fileId: data.file_id,
+    line: requestedLine,
+    lineHandle,
+    marker: null,
+    timeout: null,
+  };
+  state.lineTypingIndicators.set(indicatorId, indicator);
+  placeRemoteLineTypingBadge(indicatorId);
+  indicator.timeout = setTimeout(
+    () => removeRemoteLineTypingIndicator(indicatorId),
+    1700,
+  );
+}
+
+function placeRemoteLineTypingBadge(id) {
+  const indicatorId = String(id || 'unknown');
+  const indicator = state.lineTypingIndicators.get(indicatorId);
+  if (!indicator) return;
+
+  indicator.marker?.clear();
+  indicator.marker = null;
+  indicator.badge.remove();
+
+  const remoteCursor = state.remoteCursors.get(indicatorId);
+  if (
+    remoteCursor
+    && remoteCursor.fileId === indicator.fileId
+    && remoteCursor.position?.line === indicator.line
+  ) {
+    remoteCursor.element.appendChild(indicator.badge);
+    return;
+  }
+
+  indicator.marker = state.editor.setBookmark(
+    {
+      line: indicator.line,
+      ch: (state.editor.getLine(indicator.line) || '').length,
+    },
+    { widget: indicator.badge, insertLeft: false },
+  );
+}
+
+function removeRemoteLineTypingIndicator(id) {
+  const indicatorId = String(id || 'unknown');
+  const indicator = state.lineTypingIndicators.get(indicatorId);
+  if (!indicator) return;
+  clearTimeout(indicator.timeout);
+  indicator.marker?.clear();
+  indicator.badge?.remove();
+  if (indicator.fileId === state.activeFileId && indicator.lineHandle) {
+    state.editor.removeLineClass(indicator.lineHandle, 'background', indicator.className);
+  }
+  state.lineTypingIndicators.delete(indicatorId);
+}
+
+function clearAllRemoteLineTypingIndicators() {
+  [...state.lineTypingIndicators.keys()].forEach(removeRemoteLineTypingIndicator);
+}
+
+function removeInactiveLineTypingIndicators() {
+  const activeConnectionIds = new Set(state.activeUsers.map((user) => String(user.id)));
+  [...state.lineTypingIndicators.keys()].forEach((id) => {
+    if (!activeConnectionIds.has(id)) removeRemoteLineTypingIndicator(id);
+  });
 }
 
 function hexToRgba(hex, alpha) {
@@ -2001,6 +2144,8 @@ function updateJoinRequestCount(count) {
   const label = state.joinRequestCount > 99 ? '99+' : String(state.joinRequestCount);
   elements.joinRequestNotificationCount.textContent = label;
   elements.joinRequestNotificationCount.style.display = visible ? 'inline-flex' : 'none';
+  elements.btnJoinRequestNotifications.classList.toggle('has-pending', visible);
+  elements.joinRequestPopoverCount.textContent = `${state.joinRequestCount} waiting`;
   elements.joinRequestsSettingsCount.textContent = label;
   elements.joinRequestsSettingsCount.style.display = visible ? 'inline-flex' : 'none';
 }
@@ -2014,13 +2159,77 @@ async function loadJoinRequests() {
     state.joinRequests = data.requests || [];
     updateJoinRequestCount(data.pending_count || 0);
     renderJoinRequests();
+    renderJoinRequestPopover();
   } catch (error) {
-    elements.joinRequestsList.replaceChildren();
-    const message = document.createElement('p');
-    message.className = 'empty-state';
-    message.textContent = error.message;
-    elements.joinRequestsList.appendChild(message);
+    [elements.joinRequestsList, elements.joinRequestPopoverList].forEach((container) => {
+      container.replaceChildren();
+      const message = document.createElement('p');
+      message.className = 'empty-state';
+      message.textContent = error.message;
+      container.appendChild(message);
+    });
   }
+}
+
+const JOIN_REQUEST_AVATAR_COLORS = ['#2563EB', '#9333EA', '#0EA5A8', '#F97316', '#E91E63'];
+
+function createJoinRequestIdentity(request, index = 0) {
+  const identity = document.createElement('div');
+  identity.className = 'join-request-identity';
+  const avatar = document.createElement('span');
+  avatar.className = 'join-request-avatar';
+  avatar.style.backgroundColor = JOIN_REQUEST_AVATAR_COLORS[index % JOIN_REQUEST_AVATAR_COLORS.length];
+  avatar.textContent = request.full_name.charAt(0).toUpperCase();
+  const details = document.createElement('span');
+  details.className = 'join-request-details';
+  const name = document.createElement('strong');
+  name.textContent = `${request.full_name} wants to join`;
+  const timestamp = document.createElement('time');
+  timestamp.dateTime = request.requested_at || '';
+  timestamp.dataset.joinRequestTime = request.requested_at || '';
+  timestamp.textContent = formatJoinRequestTime(request.requested_at);
+  details.append(name, timestamp);
+  identity.append(avatar, details);
+  return identity;
+}
+
+function createJoinRequestActions(request) {
+  const actions = document.createElement('div');
+  actions.className = 'join-request-actions';
+  const accept = document.createElement('button');
+  accept.type = 'button';
+  accept.className = 'join-request-accept';
+  accept.textContent = 'Accept';
+  const reject = document.createElement('button');
+  reject.type = 'button';
+  reject.className = 'join-request-reject';
+  reject.textContent = 'Reject';
+  accept.addEventListener('click', () => resolveJoinRequest(request, 'approve', [accept, reject]));
+  reject.addEventListener('click', () => resolveJoinRequest(request, 'reject', [accept, reject]));
+  actions.append(accept, reject);
+  return actions;
+}
+
+async function resolveJoinRequest(request, decision, controls = []) {
+  controls.forEach((control) => { control.disabled = true; });
+  const response = await authorizedFetch(
+    `/api/join-requests/${encodeURIComponent(request.id)}/${decision}`,
+    { method: 'POST' },
+  );
+  const data = await response.json();
+  if (!response.ok) {
+    controls.forEach((control) => { control.disabled = false; });
+    showToast(data.detail || `Unable to ${decision} this request.`, 'error');
+    await loadJoinRequests();
+    return;
+  }
+  showToast(
+    decision === 'approve'
+      ? `${request.full_name} was accepted.`
+      : `${request.full_name} was rejected.`,
+    decision === 'approve' ? 'success' : 'error',
+  );
+  await Promise.all([loadJoinRequests(), loadAdminGuests(), loadAccessSettings()]);
 }
 
 function renderJoinRequests() {
@@ -2032,72 +2241,83 @@ function renderJoinRequests() {
     elements.joinRequestsList.appendChild(empty);
     return;
   }
-  state.joinRequests.forEach((request) => {
+  state.joinRequests.forEach((request, index) => {
     const row = document.createElement('div');
-    row.className = 'join-request-row';
-    const identity = document.createElement('div');
-    identity.className = 'join-request-identity';
-    const avatar = document.createElement('span');
-    avatar.className = 'join-request-avatar';
-    avatar.textContent = request.full_name.charAt(0).toUpperCase();
-    const details = document.createElement('span');
-    details.className = 'join-request-details';
-    const name = document.createElement('strong');
-    name.textContent = `${request.full_name} wants to join`;
-    const timestamp = document.createElement('small');
-    timestamp.textContent = `Requested ${formatJoinRequestTime(request.requested_at)}`;
-    details.append(name, timestamp);
-    identity.append(avatar, details);
-
-    const actions = document.createElement('div');
-    actions.className = 'join-request-actions';
-    const accept = document.createElement('button');
-    accept.type = 'button';
-    accept.className = 'join-request-accept';
-    accept.textContent = 'Accept';
-    const reject = document.createElement('button');
-    reject.type = 'button';
-    reject.className = 'join-request-reject';
-    reject.textContent = 'Reject';
-    const resolve = async (decision) => {
-      accept.disabled = true;
-      reject.disabled = true;
-      const response = await authorizedFetch(
-        `/api/join-requests/${encodeURIComponent(request.id)}/${decision}`,
-        { method: 'POST' },
-      );
-      const data = await response.json();
-      if (!response.ok) {
-        accept.disabled = false;
-        reject.disabled = false;
-        showToast(data.detail || `Unable to ${decision} this request.`, 'error');
-        return;
-      }
-      showToast(
-        decision === 'approve'
-          ? `${request.full_name} was accepted.`
-          : `${request.full_name} was rejected.`,
-        decision === 'approve' ? 'success' : 'error',
-      );
-      await Promise.all([loadJoinRequests(), loadAdminGuests(), loadAccessSettings()]);
-    };
-    accept.addEventListener('click', () => resolve('approve'));
-    reject.addEventListener('click', () => resolve('reject'));
-    actions.append(accept, reject);
-    row.append(identity, actions);
+    row.className = `join-request-row ${index === 0 ? 'is-active' : 'is-queued'}`;
+    row.appendChild(createJoinRequestIdentity(request, index));
+    if (index === 0) row.appendChild(createJoinRequestActions(request));
     elements.joinRequestsList.appendChild(row);
   });
 }
 
+function renderJoinRequestPopover() {
+  elements.joinRequestPopoverList.replaceChildren();
+  elements.joinRequestQueueHint.hidden = state.joinRequests.length <= 1;
+  if (!state.joinRequests.length) {
+    const empty = document.createElement('p');
+    empty.className = 'empty-state';
+    empty.textContent = 'No Guests are waiting to join.';
+    elements.joinRequestPopoverList.appendChild(empty);
+    return;
+  }
+  state.joinRequests.forEach((request, index) => {
+    const row = document.createElement('article');
+    row.className = `join-request-popover-row ${index === 0 ? 'is-active' : 'is-queued'}`;
+    row.appendChild(createJoinRequestIdentity(request, index));
+    if (index === 0) row.appendChild(createJoinRequestActions(request));
+    elements.joinRequestPopoverList.appendChild(row);
+  });
+  lucide.createIcons();
+}
+
 function formatJoinRequestTime(value) {
   const date = new Date(value);
-  return Number.isNaN(date.getTime())
-    ? 'just now'
-    : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  if (Number.isNaN(date.getTime())) return 'Now';
+  const elapsedSeconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
+  if (elapsedSeconds < 60) return 'Now';
+  const elapsedMinutes = Math.floor(elapsedSeconds / 60);
+  if (elapsedMinutes < 60) {
+    return `${elapsedMinutes} min${elapsedMinutes === 1 ? '' : 's'} ago`;
+  }
+  return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+
+function refreshJoinRequestTimes() {
+  document.querySelectorAll('[data-join-request-time]').forEach((timestamp) => {
+    timestamp.textContent = formatJoinRequestTime(timestamp.dataset.joinRequestTime);
+  });
+}
+
+function closeJoinRequestPopover() {
+  state.joinRequestPopoverOpen = false;
+  elements.joinRequestPopover.hidden = true;
+  elements.btnJoinRequestNotifications.setAttribute('aria-expanded', 'false');
+  clearInterval(state.joinRequestTimeTimer);
+  state.joinRequestTimeTimer = null;
+}
+
+async function openJoinRequestPopover(refresh = true) {
+  if (state.user?.role !== 'admin') return;
+  if (refresh) await loadJoinRequests();
+  state.joinRequestPopoverOpen = true;
+  elements.joinRequestPopover.hidden = false;
+  elements.btnJoinRequestNotifications.setAttribute('aria-expanded', 'true');
+  refreshJoinRequestTimes();
+  clearInterval(state.joinRequestTimeTimer);
+  state.joinRequestTimeTimer = setInterval(refreshJoinRequestTimes, 30000);
+}
+
+async function toggleJoinRequestPopover() {
+  if (state.joinRequestPopoverOpen) {
+    closeJoinRequestPopover();
+    return;
+  }
+  await openJoinRequestPopover();
 }
 
 async function openJoinRequestsSettings() {
   if (state.user?.role !== 'admin') return;
+  closeJoinRequestPopover();
   if (!elements.dlgAdminSettings.open) {
     await openSettings();
   } else {
@@ -2110,19 +2330,13 @@ async function openJoinRequestsSettings() {
 
 function showJoinRequestNotification(request) {
   if (!request?.full_name) return;
-  const toast = document.createElement('button');
-  toast.type = 'button';
-  toast.className = 'toast-card join-request-toast';
-  const text = document.createElement('span');
-  text.className = 'toast-text';
-  text.textContent = `${request.full_name} wants to join`;
-  toast.appendChild(text);
-  toast.addEventListener('click', () => {
-    toast.remove();
-    openJoinRequestsSettings();
+  elements.btnJoinRequestNotifications.classList.remove('attention');
+  void elements.btnJoinRequestNotifications.offsetWidth;
+  elements.btnJoinRequestNotifications.classList.add('attention');
+  setTimeout(() => elements.btnJoinRequestNotifications.classList.remove('attention'), 1600);
+  loadJoinRequests().then(() => {
+    if (!document.querySelector('dialog[open]')) openJoinRequestPopover(false);
   });
-  elements.toastContainer.appendChild(toast);
-  setTimeout(() => toast.remove(), 8000);
 }
 
 function applyAccountNameUpdate(data) {
@@ -2881,8 +3095,12 @@ function bindInterfaceEvents() {
     setMessage(elements.newFileMessage, 'Creating file...', 'success');
   });
 
-  elements.btnSettings.addEventListener('click', openSettings);
-  elements.btnJoinRequestNotifications.addEventListener('click', openJoinRequestsSettings);
+  elements.btnSettings.addEventListener('click', () => {
+    closeJoinRequestPopover();
+    openSettings();
+  });
+  elements.joinRequestNotificationWrap.addEventListener('click', (event) => event.stopPropagation());
+  elements.btnJoinRequestNotifications.addEventListener('click', toggleJoinRequestPopover);
   elements.btnCloseAdminSettings.addEventListener('click', () => elements.dlgAdminSettings.close());
   elements.btnCloseGuestSettings.addEventListener('click', () => elements.dlgGuestSettings.close());
   elements.btnAdminAppearance.addEventListener('click', () => openAppearance(elements.dlgAdminSettings));
@@ -3073,8 +3291,15 @@ function bindInterfaceEvents() {
   });
   initializeChatResize();
   initializeTerminalResize();
-  document.addEventListener('click', () => closeChatActionMenus());
+  document.addEventListener('click', () => {
+    closeChatActionMenus();
+    closeJoinRequestPopover();
+  });
   window.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && state.joinRequestPopoverOpen) {
+      closeJoinRequestPopover();
+      return;
+    }
     if (event.key === 'Escape' && !isChatCollapsed && !document.querySelector('dialog[open]')) {
       isChatCollapsed = true;
       localStorage.setItem('chat_collapsed', 'true');
