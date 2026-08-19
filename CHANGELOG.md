@@ -22,8 +22,9 @@ typing highlight without restoring the old floating cursor-name cloud.
   inactive.
 - Stopped the previous line's typing state immediately when a local user moves
   to another line or file.
-- Updated browser cache identifiers for Version 4.2.1. Users upgrading from an
-  earlier version should restart the server and press `Ctrl+F5`.
+- Updated browser cache identifiers after the final caret-spacing adjustment.
+  Users upgrading from an earlier version should restart the server and press
+  `Ctrl+F5`.
 
 ### Verification
 

@@ -922,7 +922,7 @@ class LiveEditorTestCase(unittest.TestCase):
         self.assertIn("--typing-color", stylesheet)
         self.assertIn(".line-typing-badge-label", stylesheet)
         self.assertIn("margin-left: 3ch;", stylesheet)
-        self.assertIn("4.2.1-line-typing-labels-1", html)
+        self.assertIn("4.2.1-line-typing-labels-2", html)
 
 
 if __name__ == "__main__":
