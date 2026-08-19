@@ -16,6 +16,8 @@ const state = {
   guests: [],
   joinRequests: [],
   joinRequestCount: 0,
+  joinRequestPopoverOpen: false,
+  joinRequestTimeTimer: null,
   joinRequestPollTimer: null,
   guestNameAvailable: false,
   guestNameCheckSequence: 0,
@@ -80,8 +82,13 @@ const elements = {
   myUsername: $('myUsername'),
   myAdminCrown: $('myAdminCrown'),
   btnLogout: $('btnLogout'),
+  joinRequestNotificationWrap: $('joinRequestNotificationWrap'),
   btnJoinRequestNotifications: $('btnJoinRequestNotifications'),
   joinRequestNotificationCount: $('joinRequestNotificationCount'),
+  joinRequestPopover: $('joinRequestPopover'),
+  joinRequestPopoverCount: $('joinRequestPopoverCount'),
+  joinRequestPopoverList: $('joinRequestPopoverList'),
+  joinRequestQueueHint: $('joinRequestQueueHint'),
   presenceBar: $('presenceBar'),
   avatarGroup: $('avatarGroup'),
   wsStatus: $('wsStatus'),
@@ -1279,8 +1286,8 @@ function updateSignedInUI() {
   elements.myAvatar.style.backgroundColor = safeColor(state.color);
   elements.myUsername.textContent = state.user.username;
   elements.myAdminCrown.style.display = state.user.role === 'admin' ? 'inline' : 'none';
-  elements.btnJoinRequestNotifications.style.display = state.user.role === 'admin'
-    ? 'inline-grid'
+  elements.joinRequestNotificationWrap.style.display = state.user.role === 'admin'
+    ? 'inline-flex'
     : 'none';
   elements.btnSettings.style.display = 'inline-flex';
   elements.settingsButtonLabel.textContent = state.user.role === 'admin' ? 'Admin Settings' : 'Your Code Access';
@@ -1442,7 +1449,7 @@ function handleWsMessage(data) {
     case 'join_requests_updated':
       if (state.user?.role !== 'admin') break;
       updateJoinRequestCount(data.pending_count || 0);
-      if (elements.dlgAdminSettings.open) loadJoinRequests();
+      loadJoinRequests();
       break;
 
     case 'workspace_updated':
@@ -2137,6 +2144,8 @@ function updateJoinRequestCount(count) {
   const label = state.joinRequestCount > 99 ? '99+' : String(state.joinRequestCount);
   elements.joinRequestNotificationCount.textContent = label;
   elements.joinRequestNotificationCount.style.display = visible ? 'inline-flex' : 'none';
+  elements.btnJoinRequestNotifications.classList.toggle('has-pending', visible);
+  elements.joinRequestPopoverCount.textContent = `${state.joinRequestCount} waiting`;
   elements.joinRequestsSettingsCount.textContent = label;
   elements.joinRequestsSettingsCount.style.display = visible ? 'inline-flex' : 'none';
 }
@@ -2150,13 +2159,77 @@ async function loadJoinRequests() {
     state.joinRequests = data.requests || [];
     updateJoinRequestCount(data.pending_count || 0);
     renderJoinRequests();
+    renderJoinRequestPopover();
   } catch (error) {
-    elements.joinRequestsList.replaceChildren();
-    const message = document.createElement('p');
-    message.className = 'empty-state';
-    message.textContent = error.message;
-    elements.joinRequestsList.appendChild(message);
+    [elements.joinRequestsList, elements.joinRequestPopoverList].forEach((container) => {
+      container.replaceChildren();
+      const message = document.createElement('p');
+      message.className = 'empty-state';
+      message.textContent = error.message;
+      container.appendChild(message);
+    });
   }
+}
+
+const JOIN_REQUEST_AVATAR_COLORS = ['#2563EB', '#9333EA', '#0EA5A8', '#F97316', '#E91E63'];
+
+function createJoinRequestIdentity(request, index = 0) {
+  const identity = document.createElement('div');
+  identity.className = 'join-request-identity';
+  const avatar = document.createElement('span');
+  avatar.className = 'join-request-avatar';
+  avatar.style.backgroundColor = JOIN_REQUEST_AVATAR_COLORS[index % JOIN_REQUEST_AVATAR_COLORS.length];
+  avatar.textContent = request.full_name.charAt(0).toUpperCase();
+  const details = document.createElement('span');
+  details.className = 'join-request-details';
+  const name = document.createElement('strong');
+  name.textContent = `${request.full_name} wants to join`;
+  const timestamp = document.createElement('time');
+  timestamp.dateTime = request.requested_at || '';
+  timestamp.dataset.joinRequestTime = request.requested_at || '';
+  timestamp.textContent = formatJoinRequestTime(request.requested_at);
+  details.append(name, timestamp);
+  identity.append(avatar, details);
+  return identity;
+}
+
+function createJoinRequestActions(request) {
+  const actions = document.createElement('div');
+  actions.className = 'join-request-actions';
+  const accept = document.createElement('button');
+  accept.type = 'button';
+  accept.className = 'join-request-accept';
+  accept.textContent = 'Accept';
+  const reject = document.createElement('button');
+  reject.type = 'button';
+  reject.className = 'join-request-reject';
+  reject.textContent = 'Reject';
+  accept.addEventListener('click', () => resolveJoinRequest(request, 'approve', [accept, reject]));
+  reject.addEventListener('click', () => resolveJoinRequest(request, 'reject', [accept, reject]));
+  actions.append(accept, reject);
+  return actions;
+}
+
+async function resolveJoinRequest(request, decision, controls = []) {
+  controls.forEach((control) => { control.disabled = true; });
+  const response = await authorizedFetch(
+    `/api/join-requests/${encodeURIComponent(request.id)}/${decision}`,
+    { method: 'POST' },
+  );
+  const data = await response.json();
+  if (!response.ok) {
+    controls.forEach((control) => { control.disabled = false; });
+    showToast(data.detail || `Unable to ${decision} this request.`, 'error');
+    await loadJoinRequests();
+    return;
+  }
+  showToast(
+    decision === 'approve'
+      ? `${request.full_name} was accepted.`
+      : `${request.full_name} was rejected.`,
+    decision === 'approve' ? 'success' : 'error',
+  );
+  await Promise.all([loadJoinRequests(), loadAdminGuests(), loadAccessSettings()]);
 }
 
 function renderJoinRequests() {
@@ -2168,72 +2241,83 @@ function renderJoinRequests() {
     elements.joinRequestsList.appendChild(empty);
     return;
   }
-  state.joinRequests.forEach((request) => {
+  state.joinRequests.forEach((request, index) => {
     const row = document.createElement('div');
-    row.className = 'join-request-row';
-    const identity = document.createElement('div');
-    identity.className = 'join-request-identity';
-    const avatar = document.createElement('span');
-    avatar.className = 'join-request-avatar';
-    avatar.textContent = request.full_name.charAt(0).toUpperCase();
-    const details = document.createElement('span');
-    details.className = 'join-request-details';
-    const name = document.createElement('strong');
-    name.textContent = `${request.full_name} wants to join`;
-    const timestamp = document.createElement('small');
-    timestamp.textContent = `Requested ${formatJoinRequestTime(request.requested_at)}`;
-    details.append(name, timestamp);
-    identity.append(avatar, details);
-
-    const actions = document.createElement('div');
-    actions.className = 'join-request-actions';
-    const accept = document.createElement('button');
-    accept.type = 'button';
-    accept.className = 'join-request-accept';
-    accept.textContent = 'Accept';
-    const reject = document.createElement('button');
-    reject.type = 'button';
-    reject.className = 'join-request-reject';
-    reject.textContent = 'Reject';
-    const resolve = async (decision) => {
-      accept.disabled = true;
-      reject.disabled = true;
-      const response = await authorizedFetch(
-        `/api/join-requests/${encodeURIComponent(request.id)}/${decision}`,
-        { method: 'POST' },
-      );
-      const data = await response.json();
-      if (!response.ok) {
-        accept.disabled = false;
-        reject.disabled = false;
-        showToast(data.detail || `Unable to ${decision} this request.`, 'error');
-        return;
-      }
-      showToast(
-        decision === 'approve'
-          ? `${request.full_name} was accepted.`
-          : `${request.full_name} was rejected.`,
-        decision === 'approve' ? 'success' : 'error',
-      );
-      await Promise.all([loadJoinRequests(), loadAdminGuests(), loadAccessSettings()]);
-    };
-    accept.addEventListener('click', () => resolve('approve'));
-    reject.addEventListener('click', () => resolve('reject'));
-    actions.append(accept, reject);
-    row.append(identity, actions);
+    row.className = `join-request-row ${index === 0 ? 'is-active' : 'is-queued'}`;
+    row.appendChild(createJoinRequestIdentity(request, index));
+    if (index === 0) row.appendChild(createJoinRequestActions(request));
     elements.joinRequestsList.appendChild(row);
   });
 }
 
+function renderJoinRequestPopover() {
+  elements.joinRequestPopoverList.replaceChildren();
+  elements.joinRequestQueueHint.hidden = state.joinRequests.length <= 1;
+  if (!state.joinRequests.length) {
+    const empty = document.createElement('p');
+    empty.className = 'empty-state';
+    empty.textContent = 'No Guests are waiting to join.';
+    elements.joinRequestPopoverList.appendChild(empty);
+    return;
+  }
+  state.joinRequests.forEach((request, index) => {
+    const row = document.createElement('article');
+    row.className = `join-request-popover-row ${index === 0 ? 'is-active' : 'is-queued'}`;
+    row.appendChild(createJoinRequestIdentity(request, index));
+    if (index === 0) row.appendChild(createJoinRequestActions(request));
+    elements.joinRequestPopoverList.appendChild(row);
+  });
+  lucide.createIcons();
+}
+
 function formatJoinRequestTime(value) {
   const date = new Date(value);
-  return Number.isNaN(date.getTime())
-    ? 'just now'
-    : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  if (Number.isNaN(date.getTime())) return 'Now';
+  const elapsedSeconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
+  if (elapsedSeconds < 60) return 'Now';
+  const elapsedMinutes = Math.floor(elapsedSeconds / 60);
+  if (elapsedMinutes < 60) {
+    return `${elapsedMinutes} min${elapsedMinutes === 1 ? '' : 's'} ago`;
+  }
+  return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+
+function refreshJoinRequestTimes() {
+  document.querySelectorAll('[data-join-request-time]').forEach((timestamp) => {
+    timestamp.textContent = formatJoinRequestTime(timestamp.dataset.joinRequestTime);
+  });
+}
+
+function closeJoinRequestPopover() {
+  state.joinRequestPopoverOpen = false;
+  elements.joinRequestPopover.hidden = true;
+  elements.btnJoinRequestNotifications.setAttribute('aria-expanded', 'false');
+  clearInterval(state.joinRequestTimeTimer);
+  state.joinRequestTimeTimer = null;
+}
+
+async function openJoinRequestPopover(refresh = true) {
+  if (state.user?.role !== 'admin') return;
+  if (refresh) await loadJoinRequests();
+  state.joinRequestPopoverOpen = true;
+  elements.joinRequestPopover.hidden = false;
+  elements.btnJoinRequestNotifications.setAttribute('aria-expanded', 'true');
+  refreshJoinRequestTimes();
+  clearInterval(state.joinRequestTimeTimer);
+  state.joinRequestTimeTimer = setInterval(refreshJoinRequestTimes, 30000);
+}
+
+async function toggleJoinRequestPopover() {
+  if (state.joinRequestPopoverOpen) {
+    closeJoinRequestPopover();
+    return;
+  }
+  await openJoinRequestPopover();
 }
 
 async function openJoinRequestsSettings() {
   if (state.user?.role !== 'admin') return;
+  closeJoinRequestPopover();
   if (!elements.dlgAdminSettings.open) {
     await openSettings();
   } else {
@@ -2246,19 +2330,13 @@ async function openJoinRequestsSettings() {
 
 function showJoinRequestNotification(request) {
   if (!request?.full_name) return;
-  const toast = document.createElement('button');
-  toast.type = 'button';
-  toast.className = 'toast-card join-request-toast';
-  const text = document.createElement('span');
-  text.className = 'toast-text';
-  text.textContent = `${request.full_name} wants to join`;
-  toast.appendChild(text);
-  toast.addEventListener('click', () => {
-    toast.remove();
-    openJoinRequestsSettings();
+  elements.btnJoinRequestNotifications.classList.remove('attention');
+  void elements.btnJoinRequestNotifications.offsetWidth;
+  elements.btnJoinRequestNotifications.classList.add('attention');
+  setTimeout(() => elements.btnJoinRequestNotifications.classList.remove('attention'), 1600);
+  loadJoinRequests().then(() => {
+    if (!document.querySelector('dialog[open]')) openJoinRequestPopover(false);
   });
-  elements.toastContainer.appendChild(toast);
-  setTimeout(() => toast.remove(), 8000);
 }
 
 function applyAccountNameUpdate(data) {
@@ -3017,8 +3095,12 @@ function bindInterfaceEvents() {
     setMessage(elements.newFileMessage, 'Creating file...', 'success');
   });
 
-  elements.btnSettings.addEventListener('click', openSettings);
-  elements.btnJoinRequestNotifications.addEventListener('click', openJoinRequestsSettings);
+  elements.btnSettings.addEventListener('click', () => {
+    closeJoinRequestPopover();
+    openSettings();
+  });
+  elements.joinRequestNotificationWrap.addEventListener('click', (event) => event.stopPropagation());
+  elements.btnJoinRequestNotifications.addEventListener('click', toggleJoinRequestPopover);
   elements.btnCloseAdminSettings.addEventListener('click', () => elements.dlgAdminSettings.close());
   elements.btnCloseGuestSettings.addEventListener('click', () => elements.dlgGuestSettings.close());
   elements.btnAdminAppearance.addEventListener('click', () => openAppearance(elements.dlgAdminSettings));
@@ -3209,8 +3291,15 @@ function bindInterfaceEvents() {
   });
   initializeChatResize();
   initializeTerminalResize();
-  document.addEventListener('click', () => closeChatActionMenus());
+  document.addEventListener('click', () => {
+    closeChatActionMenus();
+    closeJoinRequestPopover();
+  });
   window.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && state.joinRequestPopoverOpen) {
+      closeJoinRequestPopover();
+      return;
+    }
     if (event.key === 'Escape' && !isChatCollapsed && !document.querySelector('dialog[open]')) {
       isChatCollapsed = true;
       localStorage.setItem('chat_collapsed', 'true');

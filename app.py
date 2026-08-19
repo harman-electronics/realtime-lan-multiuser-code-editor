@@ -450,9 +450,24 @@ class ConnectionManager:
                 "status": request["status"],
                 "requested_at": request["requested_at"],
             }
-            for request in reversed(self.join_requests)
+            for request in self.join_requests
             if request.get("status") == "pending"
         ]
+
+    def require_next_join_request(self, request_id: str) -> None:
+        next_request = next(
+            (
+                request
+                for request in self.join_requests
+                if request.get("status") == "pending"
+            ),
+            None,
+        )
+        if next_request and next_request.get("id") != request_id:
+            raise HTTPException(
+                status_code=409,
+                detail="Resolve the oldest join request first.",
+            )
 
     def guest_name_availability(self, full_name: str) -> Dict[str, Any]:
         name = normalize_display_name(full_name)
@@ -548,6 +563,7 @@ class ConnectionManager:
             raise HTTPException(status_code=404, detail="Join request not found.")
         if request.get("status") != "pending":
             raise HTTPException(status_code=409, detail="This join request was already resolved.")
+        self.require_next_join_request(request_id)
         guest = self.get_guest_by_name(request["full_name"])
         if guest and self.is_account_connected(guest["account_id"]):
             raise HTTPException(
@@ -576,6 +592,7 @@ class ConnectionManager:
             raise HTTPException(status_code=404, detail="Join request not found.")
         if request.get("status") != "pending":
             raise HTTPException(status_code=409, detail="This join request was already resolved.")
+        self.require_next_join_request(request_id)
         request["status"] = "rejected"
         request["resolved_at"] = datetime.now().isoformat(timespec="seconds")
         self.save_join_requests()

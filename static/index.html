@@ -21,7 +21,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/addon/edit/matchbrackets.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/addon/selection/active-line.min.js"></script>
 
-  <link rel="stylesheet" href="/static/style.css?v=4.2.1-line-typing-labels-3" />
+  <link rel="stylesheet" href="/static/style.css?v=4.2.1-join-request-queue-2" />
 </head>
 <body>
   <div id="toastContainer" class="toast-container" aria-live="polite"></div>
@@ -51,10 +51,25 @@
         <button id="btnFontInc" type="button" title="Increase font size"><i data-lucide="plus"></i></button>
       </div>
 
-      <button class="join-request-notification" id="btnJoinRequestNotifications" type="button" style="display:none;" title="Open Guest join requests" aria-label="Open Guest join requests">
-        <i data-lucide="bell"></i>
-        <span class="join-request-badge" id="joinRequestNotificationCount" style="display:none;">0</span>
-      </button>
+      <div class="join-request-notification-wrap" id="joinRequestNotificationWrap" style="display:none;">
+        <button class="join-request-notification" id="btnJoinRequestNotifications" type="button" title="Open Guest join requests" aria-label="Open Guest join requests" aria-controls="joinRequestPopover" aria-expanded="false">
+          <i data-lucide="bell"></i>
+          <span class="join-request-badge" id="joinRequestNotificationCount" style="display:none;">0</span>
+        </button>
+        <section class="join-request-popover" id="joinRequestPopover" aria-label="Join requests" hidden>
+          <div class="join-request-popover-heading">
+            <div>
+              <strong>Join requests</strong>
+              <span id="joinRequestPopoverCount">0 waiting</span>
+            </div>
+          </div>
+          <div class="join-request-popover-list" id="joinRequestPopoverList"></div>
+          <p class="join-request-queue-hint" id="joinRequestQueueHint" hidden>
+            <i data-lucide="clock-3"></i>
+            Next request opens after a decision
+          </p>
+        </section>
+      </div>
 
       <div class="user-badge-container" id="userProfileBadge" style="display:none;">
         <div class="user-avatar" id="myAvatar">?</div>
@@ -531,6 +546,6 @@
     </div>
   </dialog>
 
-  <script src="/static/app.js?v=4.2.1-line-typing-labels-3"></script>
+  <script src="/static/app.js?v=4.2.1-join-request-queue-2"></script>
 </body>
 </html>
