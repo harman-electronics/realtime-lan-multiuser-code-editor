@@ -3,6 +3,42 @@
 All notable changes to the Real-Time LAN Multiuser Code Editor will be recorded
 in this file.
 
+## Version 4.2.1 — Exact-Line Typing Labels
+
+Version 4.2.1 adds a compact identity label to the existing synchronized line-
+typing highlight without restoring the old floating cursor-name cloud.
+
+### Added and changed
+
+- Added a colour-matched **Name is typing** label beside the exact code line a
+  remote participant is editing.
+- Kept each label inline after the line's code so it does not cover the source
+  text, with long names shortened visually when space is limited.
+- Preserved the subtle full-line colour highlight and name-free remote caret.
+- Ensured one current typing label per participant and removed stale labels when
+  that participant stops, changes lines or files, disconnects, or becomes
+  inactive.
+- Stopped the previous line's typing state immediately when a local user moves
+  to another line or file.
+- Updated browser cache identifiers for Version 4.2.1. Users upgrading from an
+  earlier version should restart the server and press `Ctrl+F5`.
+
+### Verification
+
+- Extended the permanent typing-interface regression test with label rendering,
+  cleanup, cursor-name removal, colour styling, and cache-version checks.
+- Re-ran all 19 permanent tests and the 12-case Python/C++ execution matrix.
+- Captured the standard Version 4.2.1 light, dark, and fitted-wallpaper
+  screenshots with the exact-line typing label visible.
+
+### Main components changed
+
+- `static/app.js`: exact-line label rendering and typing-state cleanup.
+- `static/style.css`: compact colour-matched typing-label styling.
+- `static/index.html`: Version 4.2.1 cache identifiers.
+- `test_app.py`: Version 4.2.1 regression coverage.
+- `docs/images/`: standard Version 4.2.1 interface screenshots.
+
 ## Version 4.2 — Guest Name Validation and Interface Corrections
 
 Version 4.2 adds Guest-name validation and groups three interface corrections
