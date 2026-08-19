@@ -896,7 +896,7 @@ class LiveEditorTestCase(unittest.TestCase):
         self.assertEqual(cpp_problems[0]["line"], 7)
         self.assertEqual(cpp_problems[0]["column"], 14)
 
-    def test_top_typing_banner_is_removed_but_line_highlights_remain(self):
+    def test_line_typing_labels_replace_top_banner_and_cursor_names(self):
         static_directory = Path(app_module.STATIC_DIR)
         html = (static_directory / "index.html").read_text(encoding="utf-8")
         javascript = (static_directory / "app.js").read_text(encoding="utf-8")
@@ -910,6 +910,18 @@ class LiveEditorTestCase(unittest.TestCase):
         self.assertNotIn("remote-cursor-flag", stylesheet)
         self.assertIn("typing_line_update", javascript)
         self.assertIn("updateRemoteLineHighlight", javascript)
+        self.assertIn("lineTypingIndicators: new Map()", javascript)
+        self.assertIn("line-typing-badge", javascript)
+        self.assertIn("line-typing-badge-dot", javascript)
+        self.assertIn("`${data.username}${data.role === 'admin' ? ' ♛' : ''} is typing`", javascript)
+        self.assertIn("removeRemoteLineTypingIndicator", javascript)
+        self.assertIn("clearAllRemoteLineTypingIndicators", javascript)
+        self.assertIn("removeInactiveLineTypingIndicators", javascript)
+        self.assertIn("stopLocalTyping", javascript)
+        self.assertIn(".line-typing-badge", stylesheet)
+        self.assertIn("--typing-color", stylesheet)
+        self.assertIn(".line-typing-badge-label", stylesheet)
+        self.assertIn("4.2.1-line-typing-labels-1", html)
 
 
 if __name__ == "__main__":

@@ -26,9 +26,10 @@ const state = {
   editor: null,
   isRemoteChange: false,
   typingTimeout: null,
+  localTypingLocation: null,
   typingUsers: new Set(),
   remoteCursors: new Map(),
-  lineTypingTimeouts: new Map(),
+  lineTypingIndicators: new Map(),
   chatHistory: [],
   currentChatTab: 'group',
   activeDmAccountId: null,
@@ -871,24 +872,61 @@ function firstBlockedLine(startLine, endLine) {
 }
 
 function handleLocalTyping() {
-  const line = state.editor.getCursor().line;
+  const nextLocation = {
+    fileId: state.activeFileId,
+    line: state.editor.getCursor().line,
+  };
+  const previousLocation = state.localTypingLocation;
+  if (
+    previousLocation
+    && (
+      previousLocation.fileId !== nextLocation.fileId
+      || previousLocation.line !== nextLocation.line
+    )
+  ) {
+    sendWsMessage({
+      type: 'typing_line',
+      file_id: previousLocation.fileId,
+      line: previousLocation.line,
+      is_typing: false,
+    });
+  }
+  state.localTypingLocation = nextLocation;
   sendWsMessage({ type: 'typing', is_typing: true });
   sendWsMessage({
     type: 'typing_line',
-    file_id: state.activeFileId,
-    line,
+    file_id: nextLocation.fileId,
+    line: nextLocation.line,
     is_typing: true,
   });
   clearTimeout(state.typingTimeout);
   state.typingTimeout = setTimeout(() => {
+    if (state.localTypingLocation !== nextLocation) return;
     sendWsMessage({ type: 'typing', is_typing: false });
     sendWsMessage({
       type: 'typing_line',
-      file_id: state.activeFileId,
-      line,
+      file_id: nextLocation.fileId,
+      line: nextLocation.line,
       is_typing: false,
     });
+    state.localTypingLocation = null;
   }, 1200);
+}
+
+function stopLocalTyping() {
+  clearTimeout(state.typingTimeout);
+  state.typingTimeout = null;
+  const location = state.localTypingLocation;
+  if (location) {
+    sendWsMessage({
+      type: 'typing_line',
+      file_id: location.fileId,
+      line: location.line,
+      is_typing: false,
+    });
+  }
+  sendWsMessage({ type: 'typing', is_typing: false });
+  state.localTypingLocation = null;
 }
 
 async function fetchAppInfo() {
@@ -1295,6 +1333,10 @@ function initializeWebSocket() {
     const programWasRunning = state.terminalRunning;
     state.socketReady = false;
     state.joined = false;
+    state.localTypingLocation = null;
+    state.typingUsers.clear();
+    clearAllRemoteCursors();
+    clearAllRemoteLineTypingIndicators();
     setTerminalRunning(false, false);
     if (programWasRunning) {
       appendTerminalOutput('\n[Connection closed. The running program was stopped.]\n', 'stderr');
@@ -1372,6 +1414,7 @@ function handleWsMessage(data) {
       updateDmRecipientDropdown();
       renderDmConversations();
       syncChatView();
+      removeInactiveLineTypingIndicators();
       refreshGuestNameAvailability();
       if (isSettingsDialogOpen()) loadAccessSettings();
       break;
@@ -1529,6 +1572,7 @@ function handleWsMessage(data) {
 
 function applyWorkspace(workspace, allLineAuthors) {
   if (!workspace) return;
+  clearAllRemoteLineTypingIndicators();
   const previousActive = state.activeFileId;
   state.files = workspace.files || [];
   state.tabLimit = workspace.tab_limit || 6;
@@ -1597,8 +1641,10 @@ function switchFile(fileId) {
   if (current && state.editor && !state.isRemoteChange) {
     current.code = state.editor.getValue();
   }
+  stopLocalTyping();
   state.activeFileId = fileId;
   clearAllRemoteCursors();
+  clearAllRemoteLineTypingIndicators();
   renderFileTabs();
   loadActiveFileIntoEditor();
   sendWsMessage({
@@ -1716,6 +1762,7 @@ function applyAuthoritativeFile(data) {
   state.files[index] = data.file;
   state.lineAuthors[data.file.id] = data.line_authors || {};
   if (state.activeFileId !== data.file.id) return;
+  clearAllRemoteLineTypingIndicators();
   state.isRemoteChange = true;
   state.editor.setValue(data.file.code || '');
   state.isRemoteChange = false;
@@ -1770,26 +1817,79 @@ function updateTypingState(data) {
 }
 
 function updateRemoteLineHighlight(data) {
-  if (data.file_id !== state.activeFileId) return;
-  const safeId = String(data.id).replace(/[^A-Za-z0-9_-]/g, '_');
-  const key = `${safeId}_${data.file_id}_${data.line}`;
-  const className = `typing-line-${safeId}`;
-  clearTimeout(state.lineTypingTimeouts.get(key));
-  state.editor.removeLineClass(data.line, 'background', className);
+  const indicatorId = String(data.id || 'unknown');
+  removeRemoteLineTypingIndicator(indicatorId);
+  if (!data.is_typing || data.file_id !== state.activeFileId || !data.username) return;
 
-  if (!data.is_typing) return;
+  const requestedLine = Number(data.line);
+  if (!Number.isInteger(requestedLine) || requestedLine < 0 || requestedLine >= state.editor.lineCount()) {
+    return;
+  }
+
+  const safeId = indicatorId.replace(/[^A-Za-z0-9_-]/g, '_');
+  const className = `typing-line-${safeId}`;
+  const color = safeColor(data.color);
   let style = document.getElementById(`typing-style-${safeId}`);
   if (!style) {
     style = document.createElement('style');
     style.id = `typing-style-${safeId}`;
     document.head.appendChild(style);
   }
-  style.textContent = `.${className} { background-color: ${hexToRgba(safeColor(data.color), 0.20)} !important; }`;
-  state.editor.addLineClass(data.line, 'background', className);
-  state.lineTypingTimeouts.set(key, setTimeout(() => {
-    state.editor.removeLineClass(data.line, 'background', className);
-    state.lineTypingTimeouts.delete(key);
-  }, 1500));
+  style.textContent = `.${className} { background-color: ${hexToRgba(color, 0.18)} !important; }`;
+  const lineHandle = state.editor.addLineClass(requestedLine, 'background', className);
+
+  const badge = document.createElement('span');
+  badge.className = 'line-typing-badge';
+  badge.style.setProperty('--typing-color', color);
+  badge.setAttribute('aria-hidden', 'true');
+  badge.title = `${data.username} is typing`;
+
+  const dot = document.createElement('span');
+  dot.className = 'line-typing-badge-dot';
+  dot.setAttribute('aria-hidden', 'true');
+  const label = document.createElement('span');
+  label.className = 'line-typing-badge-label';
+  label.textContent = `${data.username}${data.role === 'admin' ? ' ♛' : ''} is typing`;
+  badge.append(dot, label);
+
+  const marker = state.editor.setBookmark(
+    { line: requestedLine, ch: (state.editor.getLine(requestedLine) || '').length },
+    { widget: badge, insertLeft: false },
+  );
+  const timeout = setTimeout(
+    () => removeRemoteLineTypingIndicator(indicatorId),
+    1700,
+  );
+  state.lineTypingIndicators.set(indicatorId, {
+    className,
+    fileId: data.file_id,
+    lineHandle,
+    marker,
+    timeout,
+  });
+}
+
+function removeRemoteLineTypingIndicator(id) {
+  const indicatorId = String(id || 'unknown');
+  const indicator = state.lineTypingIndicators.get(indicatorId);
+  if (!indicator) return;
+  clearTimeout(indicator.timeout);
+  indicator.marker?.clear();
+  if (indicator.fileId === state.activeFileId && indicator.lineHandle) {
+    state.editor.removeLineClass(indicator.lineHandle, 'background', indicator.className);
+  }
+  state.lineTypingIndicators.delete(indicatorId);
+}
+
+function clearAllRemoteLineTypingIndicators() {
+  [...state.lineTypingIndicators.keys()].forEach(removeRemoteLineTypingIndicator);
+}
+
+function removeInactiveLineTypingIndicators() {
+  const activeConnectionIds = new Set(state.activeUsers.map((user) => String(user.id)));
+  [...state.lineTypingIndicators.keys()].forEach((id) => {
+    if (!activeConnectionIds.has(id)) removeRemoteLineTypingIndicator(id);
+  });
 }
 
 function hexToRgba(hex, alpha) {
