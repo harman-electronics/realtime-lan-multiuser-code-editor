@@ -3,10 +3,12 @@
 All notable changes to the Real-Time LAN Multiuser Code Editor will be recorded
 in this file.
 
-## Version 4.2.1 — Exact-Line Typing Labels
+## Version 4.2.1 — Typing Labels and Join-Request Queue
 
 Version 4.2.1 adds a compact identity label to the existing synchronized line-
-typing highlight without restoring the old floating cursor-name cloud.
+typing highlight without restoring the old floating cursor-name cloud. It also
+adds an oldest-first Admin join-request queue that keeps the current decision
+prominent without displaying controls on every waiting request.
 
 ### Added and changed
 
@@ -27,22 +29,45 @@ typing highlight without restoring the old floating cursor-name cloud.
 - Updated browser cache identifiers after the final caret-spacing adjustment.
   Users upgrading from an earlier version should restart the server and press
   `Ctrl+F5`.
+- Replaced the single join-request notification card with an anchored bell
+  popover that displays all waiting Guests without leaving the workspace.
+- Ordered pending requests from oldest to newest and displayed **Accept** and
+  **Reject** only for the oldest request.
+- Promoted the next request automatically after each decision and added server-
+  side protection against resolving a later request out of order.
+- Added readable request ages using **Now**, elapsed minutes, and the exact
+  request time for older entries.
+- Made new requests visually noticeable through the bell badge, attention
+  animation, and automatic popover opening when no dialog is active.
+- Added outside-click and `Escape` closing while keeping the same FIFO queue in
+  Admin Settings.
 
 ### Verification
 
 - Extended the permanent typing-interface regression test with label rendering,
   cleanup, cursor-name removal, colour styling, and cache-version checks.
-- Re-ran all 19 permanent tests and the 12-case Python/C++ execution matrix.
-- Captured the standard Version 4.2.1 light, dark, and fitted-wallpaper
-  screenshots with the exact-line typing label visible.
+- Added queue regression coverage for FIFO ordering, automatic promotion,
+  out-of-order decision rejection, popover markup, relative times, styling, and
+  cache identifiers.
+- Re-ran all 20 permanent tests and the 12-case Python/C++ execution matrix.
+- Verified the live Admin popover with five simultaneous pending requests,
+  automatic opening on a new request, queue promotion, `Escape`, and outside-
+  click closing.
+- Retained the standard Version 4.2.1 light, dark, and fitted-wallpaper
+  screenshots and captured a live five-request FIFO popover view.
 
 ### Main components changed
 
-- `static/app.js`: exact-line label rendering and typing-state cleanup.
-- `static/style.css`: compact colour-matched typing-label styling.
-- `static/index.html`: Version 4.2.1 cache identifiers.
-- `test_app.py`: Version 4.2.1 regression coverage.
-- `docs/images/`: standard Version 4.2.1 interface screenshots.
+- `app.py`: oldest-first queue ordering and decision-order enforcement.
+- `static/app.js`: exact-line label rendering, typing-state cleanup, join-
+  request popover rendering, relative times, and shared decision handling.
+- `static/style.css`: compact colour-matched typing-label styling and responsive
+  queue-popover presentation.
+- `static/index.html`: join-request popover structure and Version 4.2.1 cache
+  identifiers.
+- `test_app.py`: Version 4.2.1 typing-label and FIFO-queue regression coverage.
+- `docs/images/`: standard Version 4.2.1 interface screenshots and live join-
+  request queue capture.
 
 ## Version 4.2 — Guest Name Validation and Interface Corrections
 
