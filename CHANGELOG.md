@@ -12,6 +12,8 @@ typing highlight without restoring the old floating cursor-name cloud.
 
 - Added a colour-matched **Name is typing** label beside the exact code line a
   remote participant is editing.
+- Positioned the label three character spaces after the participant's caret so
+  the caret stays clearly visible before the name.
 - Kept each label inline after the line's code so it does not cover the source
   text, with long names shortened visually when space is limited.
 - Preserved the subtle full-line colour highlight and name-free remote caret.

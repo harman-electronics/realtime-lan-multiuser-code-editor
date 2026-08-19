@@ -8,11 +8,11 @@ updates are synchronized for connected users in real time.
 ## Version 4.2.1 — Exact-Line Typing Labels
 
 Version 4.2.1 shows who is actively editing each code line. A compact label such
-as **Bob is typing** appears beside the exact line, uses Bob's selected colour,
-and shares the line's subtle colour highlight. The label disappears when Bob
-stops typing, changes lines or files, or disconnects. Remote cursors remain
-name-free, and the Version 4.2 Guest-name validation and interface corrections
-remain unchanged.
+as **Bob is typing** appears three character spaces after Bob's caret on the
+exact line, uses Bob's selected colour, and shares the line's subtle colour
+highlight. The label disappears when Bob stops typing, changes lines or files,
+or disconnects. Remote cursors remain name-free, and the Version 4.2 Guest-name
+validation and interface corrections remain unchanged.
 
 Read the [changelog](CHANGELOG.md) for the complete feature history, detailed
 changes, security notes, and previous releases.

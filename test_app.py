@@ -921,6 +921,7 @@ class LiveEditorTestCase(unittest.TestCase):
         self.assertIn(".line-typing-badge", stylesheet)
         self.assertIn("--typing-color", stylesheet)
         self.assertIn(".line-typing-badge-label", stylesheet)
+        self.assertIn("margin-left: 3ch;", stylesheet)
         self.assertIn("4.2.1-line-typing-labels-1", html)
 
 
