@@ -332,6 +332,35 @@ body {
   box-shadow: 0 0 8px var(--success-color);
 }
 
+.execution-mode-tag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 3px 9px;
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.execution-mode-tag.browser {
+  color: var(--success-color);
+  background: color-mix(in srgb, var(--success-color) 10%, transparent);
+  border-color: color-mix(in srgb, var(--success-color) 35%, transparent);
+}
+
+.execution-mode-tag.host {
+  color: var(--warning-color);
+  background: color-mix(in srgb, var(--warning-color) 10%, transparent);
+  border-color: color-mix(in srgb, var(--warning-color) 35%, transparent);
+}
+
+.execution-mode-tag.restricted {
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--text-muted) 8%, transparent);
+}
+
 .toolbar-right {
   display: flex;
   align-items: center;
@@ -3287,7 +3316,8 @@ button.rail-button:hover {
 
   .toolbar-menu,
   .toolbar-decoration,
-  .status-indicator {
+  .status-indicator,
+  .execution-mode-tag {
     display: none;
   }
 

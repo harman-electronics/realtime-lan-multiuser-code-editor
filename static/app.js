@@ -41,6 +41,11 @@ const state = {
   terminalRunning: false,
   terminalAcceptsInput: false,
   terminalRunId: null,
+  terminalRuntime: null,
+  pythonWorker: null,
+  pythonRunStartedAt: 0,
+  pythonExecutionTimer: null,
+  pythonLoadTimer: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -93,6 +98,7 @@ const elements = {
   avatarGroup: $('avatarGroup'),
   wsStatus: $('wsStatus'),
   wsStatusText: $('wsStatusText'),
+  executionModeTag: $('executionModeTag'),
   fileTabs: $('fileTabs'),
   btnAddFile: $('btnAddFile'),
   tabCountLabel: $('tabCountLabel'),
@@ -1293,6 +1299,7 @@ function updateSignedInUI() {
   elements.settingsButtonLabel.textContent = state.user.role === 'admin' ? 'Admin Settings' : 'Your Code Access';
   elements.btnAddFile.style.display = state.user.role === 'admin' ? 'inline-flex' : 'none';
   renderFileTabs();
+  updateExecutionControls();
 }
 
 function clearAuthentication() {
@@ -1337,15 +1344,16 @@ function initializeWebSocket() {
   });
 
   state.socket.addEventListener('close', () => {
-    const programWasRunning = state.terminalRunning;
+    const hostProgramWasRunning = state.terminalRunning
+      && state.terminalRuntime === 'host-cpp';
     state.socketReady = false;
     state.joined = false;
     state.localTypingLocation = null;
     state.typingUsers.clear();
     clearAllRemoteCursors();
     clearAllRemoteLineTypingIndicators();
-    setTerminalRunning(false, false);
-    if (programWasRunning) {
+    if (hostProgramWasRunning) setTerminalRunning(false, false);
+    if (hostProgramWasRunning) {
       appendTerminalOutput('\n[Connection closed. The running program was stopped.]\n', 'stderr');
     }
     setSocketStatus('Reconnecting...', false);
@@ -1519,6 +1527,7 @@ function handleWsMessage(data) {
       break;
 
     case 'terminal_started':
+      state.terminalRuntime = 'host-cpp';
       state.terminalRunId = data.run_id;
       setTerminalRunning(true, false);
       break;
@@ -1558,6 +1567,7 @@ function handleWsMessage(data) {
       );
       elements.execTimeTag.textContent = `${Number(data.elapsed || 0).toFixed(2)}s`;
       elements.execTimeTag.style.display = 'inline-block';
+      state.terminalRuntime = null;
       setTerminalRunning(false, false);
       break;
 
@@ -1675,6 +1685,7 @@ function loadActiveFileIntoEditor() {
   elements.currentLanguageBadge.textContent = file.language === 'cpp' ? 'C++' : 'Python';
   elements.currentLanguageBadge.className = `language-badge ${file.language}`;
   elements.runButtonLabel.textContent = file.language === 'cpp' ? 'Compile & Run C++' : 'Run Python';
+  updateExecutionControls();
   lucide.createIcons();
   state.editor.refresh();
 }
@@ -2353,11 +2364,51 @@ function applyAccountNameUpdate(data) {
   renderPresence();
 }
 
+const BROWSER_PYTHON_LIMITS = Object.freeze({
+  executionSeconds: 60,
+  outputChars: 100000,
+  inputLineChars: 4096,
+  inputTotalChars: 20000,
+  runtimeLoadSeconds: 45,
+});
+
+function canRunActiveFile() {
+  const file = getActiveFile();
+  if (!file || !state.user) return false;
+  return file.language !== 'cpp' || state.user.role === 'admin';
+}
+
+function updateExecutionControls() {
+  const file = getActiveFile();
+  if (!file) return;
+  const isCpp = file.language === 'cpp';
+  const guestCpp = isCpp && state.user?.role !== 'admin';
+  elements.btnRunCode.disabled = state.terminalRunning || guestCpp || !state.user;
+  elements.btnRunCode.title = guestCpp
+    ? 'Guests can edit C++, but only the Admin can execute it on the host.'
+    : isCpp
+      ? 'Compile and run C++ on the Admin host'
+      : 'Run Python safely inside this browser';
+  elements.executionModeTag.textContent = guestCpp
+    ? 'Admin-only execution'
+    : isCpp
+      ? 'Runs on Admin host'
+      : 'Runs in this browser';
+  elements.executionModeTag.className = `execution-mode-tag ${guestCpp ? 'restricted' : isCpp ? 'host' : 'browser'}`;
+  if (!state.terminalRunning) {
+    elements.terminalInput.placeholder = guestCpp
+      ? 'Guests cannot execute C++ yet.'
+      : isCpp
+        ? 'Run C++ to enter input...'
+        : 'Run Python to enter input...';
+  }
+}
+
 function setTerminalRunning(running, acceptsInput = false) {
   state.terminalRunning = running;
   state.terminalAcceptsInput = running && acceptsInput;
   if (!running) state.terminalRunId = null;
-  elements.btnRunCode.disabled = running;
+  elements.btnRunCode.disabled = running || !canRunActiveFile();
   elements.btnStopCode.style.display = running ? 'inline-flex' : 'none';
   elements.btnStopCode.disabled = !running;
   elements.terminalInput.disabled = !state.terminalAcceptsInput;
@@ -2368,6 +2419,7 @@ function setTerminalRunning(running, acceptsInput = false) {
       ? 'Starting program...'
       : 'Run a program to enter input...';
   if (!running) elements.terminalInput.value = '';
+  updateExecutionControls();
 }
 
 function appendTerminalOutput(text, stream = 'stdout') {
@@ -2397,6 +2449,167 @@ function appendTerminalStatus(message, stream = 'status') {
   appendTerminalOutput(`${prefix}[${message}]\n`, stream);
 }
 
+function clearBrowserPythonTimers() {
+  clearTimeout(state.pythonExecutionTimer);
+  clearTimeout(state.pythonLoadTimer);
+  state.pythonExecutionTimer = null;
+  state.pythonLoadTimer = null;
+}
+
+function browserPythonElapsed() {
+  return state.pythonRunStartedAt
+    ? (performance.now() - state.pythonRunStartedAt) / 1000
+    : 0;
+}
+
+function showBrowserPythonElapsed() {
+  elements.execTimeTag.textContent = `${browserPythonElapsed().toFixed(2)}s`;
+  elements.execTimeTag.style.display = 'inline-block';
+}
+
+function renderBrowserPythonTranscript(events) {
+  elements.consoleOutput.replaceChildren();
+  appendTerminalStatus('Python is running safely in this browser.');
+  (events || []).forEach((event) => {
+    appendTerminalOutput(event.text || '', event.stream || 'stdout');
+  });
+}
+
+function resetBrowserPythonRun() {
+  clearBrowserPythonTimers();
+  state.pythonRunStartedAt = 0;
+  state.terminalRuntime = null;
+  setTerminalRunning(false, false);
+}
+
+function terminateBrowserPythonWorker() {
+  if (state.pythonWorker) state.pythonWorker.terminate();
+  state.pythonWorker = null;
+}
+
+function failBrowserPython(message) {
+  terminateBrowserPythonWorker();
+  appendTerminalStatus(message, 'stderr');
+  showToast(message, 'error');
+  showBrowserPythonElapsed();
+  resetBrowserPythonRun();
+}
+
+function finishBrowserPython(result) {
+  renderBrowserPythonTranscript(result.events);
+  if (result.status === 'completed') {
+    appendTerminalStatus('Program completed successfully.');
+  } else if (result.status === 'output_limited') {
+    appendTerminalStatus(
+      `Output stopped after ${BROWSER_PYTHON_LIMITS.outputChars.toLocaleString()} characters.`,
+      'stderr',
+    );
+  } else {
+    appendTerminalStatus('Python program failed.', 'stderr');
+  }
+  showBrowserPythonElapsed();
+  resetBrowserPythonRun();
+}
+
+function handleBrowserPythonMessage(event) {
+  const data = event.data || {};
+  if (data.runId && data.runId !== state.terminalRunId) return;
+  if (data.type === 'runtime_loading') return;
+
+  if (data.type === 'runtime_ready') {
+    clearTimeout(state.pythonLoadTimer);
+    state.pythonLoadTimer = null;
+    if (!state.pythonExecutionTimer) {
+      state.pythonExecutionTimer = setTimeout(() => {
+        if (state.terminalRuntime !== 'browser-python') return;
+        terminateBrowserPythonWorker();
+        appendTerminalStatus(
+          `Program stopped after ${BROWSER_PYTHON_LIMITS.executionSeconds} seconds.`,
+          'stderr',
+        );
+        showBrowserPythonElapsed();
+        resetBrowserPythonRun();
+      }, BROWSER_PYTHON_LIMITS.executionSeconds * 1000);
+    }
+    return;
+  }
+
+  if (data.type === 'result') {
+    if (data.waiting) {
+      renderBrowserPythonTranscript(data.events);
+      setTerminalRunning(true, true);
+      window.setTimeout(() => elements.terminalInput.focus(), 0);
+    } else {
+      finishBrowserPython(data);
+    }
+    return;
+  }
+
+  if (data.type === 'input_error') {
+    appendTerminalStatus(data.message || 'Unable to send terminal input.', 'stderr');
+    setTerminalRunning(true, true);
+    return;
+  }
+
+  if (data.type === 'fatal') {
+    failBrowserPython(data.message || 'The browser Python runtime could not start.');
+  }
+}
+
+function ensureBrowserPythonWorker() {
+  if (state.pythonWorker) return state.pythonWorker;
+  const worker = new Worker('/static/python-worker.mjs?v=5.0-browser-python-2', {
+    type: 'module',
+    name: 'wifi-codeshare-python',
+  });
+  worker.addEventListener('message', handleBrowserPythonMessage);
+  worker.addEventListener('error', (event) => {
+    if (state.terminalRuntime === 'browser-python') {
+      failBrowserPython(event.message || 'The browser Python worker stopped unexpectedly.');
+    }
+  });
+  state.pythonWorker = worker;
+  return worker;
+}
+
+function runBrowserPython(code) {
+  if (!window.Worker) {
+    appendTerminalStatus('This browser does not support Python Web Workers.', 'stderr');
+    showToast('This browser cannot run browser Python.', 'error');
+    return;
+  }
+  if (code.length > 500000) {
+    appendTerminalStatus('Code is too large.', 'stderr');
+    showToast('Code is too large.', 'error');
+    return;
+  }
+  state.terminalRuntime = 'browser-python';
+  state.terminalRunId = `browser_python_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  state.pythonRunStartedAt = performance.now();
+  setTerminalRunning(true, false);
+  appendTerminalStatus('Loading the local browser Python runtime...');
+  state.pythonLoadTimer = setTimeout(() => {
+    if (state.terminalRuntime === 'browser-python' && !state.pythonExecutionTimer) {
+      failBrowserPython(
+        `Browser Python did not load within ${BROWSER_PYTHON_LIMITS.runtimeLoadSeconds} seconds.`,
+      );
+    }
+  }, BROWSER_PYTHON_LIMITS.runtimeLoadSeconds * 1000);
+  ensureBrowserPythonWorker().postMessage({
+    type: 'run',
+    runId: state.terminalRunId,
+    code,
+    limits: BROWSER_PYTHON_LIMITS,
+  });
+}
+
+function stopBrowserPython() {
+  terminateBrowserPythonWorker();
+  appendTerminalStatus('Program stopped.');
+  showBrowserPythonElapsed();
+  resetBrowserPythonRun();
+}
+
 function runCurrentFile() {
   const file = getActiveFile();
   if (!file || !state.joined) {
@@ -2407,13 +2620,22 @@ function runCurrentFile() {
     showToast('Stop the current program before starting another.', 'error');
     return;
   }
-  if (state.socket?.readyState !== WebSocket.OPEN) {
+  if (file.language === 'cpp' && state.user?.role !== 'admin') {
+    showToast('Guests can edit C++, but only the Admin can execute it.', 'error');
+    return;
+  }
+  if (file.language === 'cpp' && state.socket?.readyState !== WebSocket.OPEN) {
     showToast('The live connection is not ready yet.', 'error');
     return;
   }
   elements.consoleOutput.replaceChildren();
   elements.outputDrawer.classList.remove('minimized');
   elements.execTimeTag.style.display = 'none';
+  if (file.language === 'python') {
+    runBrowserPython(state.editor.getValue());
+    return;
+  }
+  state.terminalRuntime = 'host-cpp';
   setTerminalRunning(true, false);
   sendWsMessage({
     type: 'terminal_run',
@@ -2426,7 +2648,16 @@ function sendTerminalInput(event) {
   event.preventDefault();
   if (!state.terminalAcceptsInput) return;
   const text = elements.terminalInput.value;
-  sendWsMessage({ type: 'terminal_input', text });
+  if (state.terminalRuntime === 'browser-python') {
+    state.pythonWorker?.postMessage({
+      type: 'input',
+      runId: state.terminalRunId,
+      text,
+    });
+    setTerminalRunning(true, false);
+  } else {
+    sendWsMessage({ type: 'terminal_input', text });
+  }
   elements.terminalInput.value = '';
 }
 
@@ -3185,7 +3416,8 @@ function bindInterfaceEvents() {
     elements.btnStopCode.disabled = true;
     elements.terminalInput.disabled = true;
     elements.btnSendTerminalInput.disabled = true;
-    sendWsMessage({ type: 'terminal_stop' });
+    if (state.terminalRuntime === 'browser-python') stopBrowserPython();
+    else sendWsMessage({ type: 'terminal_stop' });
   });
   elements.btnCopyCode.addEventListener('click', async () => {
     await navigator.clipboard.writeText(state.editor.getValue());

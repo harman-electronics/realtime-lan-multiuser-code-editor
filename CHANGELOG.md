@@ -3,6 +3,86 @@
 All notable changes to the Real-Time LAN Multiuser Code Editor will be recorded
 in this file.
 
+## Version 5.0 — Browser Python and Admin-Only C++
+
+Version 5.0 moves Python execution off the Admin computer and into a disposable
+WebAssembly worker in each participant's browser. C++ remains temporarily
+available only to the Admin; Guests can collaborate on C++ files but cannot
+execute them or send C++ terminal input.
+
+### Added and changed
+
+- Added a pinned, locally served Pyodide 314.0.5 runtime so Admins and Guests
+  can run Python 3.14 without installing Python, Docker, or a native runner.
+- Added a dedicated module-type Web Worker for every browser session, keeping
+  Python computation away from the interface thread and the host operating
+  system.
+- Preserved terminal-style Python `input()` by replaying the isolated program
+  with the collected input lines. Full transcript replacement prevents
+  duplicate output from appearing after a replay.
+- Preserved the 60-second execution limit, 100,000-character output limit,
+  4,096-character input-line limit, and 20,000-character total-input limit in
+  the browser runner.
+- Changed **Stop** for Python to terminate the worker immediately. A fresh
+  worker is created automatically on the next Python run.
+- Added a compact execution-location label: **Runs in this browser**, **Runs on
+  Admin host**, or **Admin-only execution**.
+- Disabled the C++ Run button and terminal input for Guests while preserving
+  C++ tabs, editing, ownership, access grants, and collaboration.
+- Retained Admin C++17 compilation, live `std::cin`, streamed output, Stop,
+  compiler detection, and host-side limits.
+- Changed Python library support to the browser standard library. Packages
+  installed in the host virtual environment are no longer exposed to user
+  Python; third-party Pyodide packages are not bundled yet.
+- Added the Pyodide MPL-2.0 licence beside the vendored runtime files.
+
+### Security changes
+
+- Removed the server's Python subprocess runner.
+- Changed the authenticated `/api/run` compatibility route to accept only C++
+  from the Admin. Admin Python receives `410 Gone`; Guest execution receives
+  `403 Forbidden`.
+- Added equivalent role and language checks to live WebSocket execution, so a
+  Guest cannot bypass the disabled interface button with a crafted message.
+- Restricted server terminal input and process control to the Admin.
+- Blocked user Python from importing Pyodide's JavaScript bridge modules, so
+  code cannot forge worker-control messages or reach browser APIs through the
+  runtime bridge.
+- Verified that browser Python cannot start a Windows host process. Its files
+  and imports operate inside the browser's WebAssembly environment.
+- Admin C++ still runs directly on the trusted host and is not a complete
+  sandbox. The application must remain on a trusted LAN with a trusted Admin.
+
+### Verification
+
+- Passed all 20 permanent automated tests.
+- Updated the 12-case execution matrix: eight checks now run against the real
+  pinned Pyodide engine, and four check Admin C++17 compilation and execution.
+- Verified Python output, sequential interactive input, functions, recursion,
+  classes, loops, standard-library imports, traceback line details, output
+  limits, and blocked host-process access.
+- Verified in two live browser sessions that both Admin and approved Guest
+  Python input complete locally, Guest C++ execution stays disabled, Admin C++
+  remains available, and no browser console errors occur.
+- Captured current light/dark browser-Python screenshots and the Guest C++
+  restriction view.
+
+### Main components changed
+
+- `app.py`: Admin-only C++ host policy and removal of host Python execution.
+- `static/python-runtime.mjs`: pinned Pyodide loader, output capture, error
+  capture, input replay, and execution limits.
+- `static/python-worker.mjs`: isolated browser execution lifecycle and input
+  messaging.
+- `static/app.js`: local Python terminal controller, Stop behavior, execution-
+  location labels, and Guest C++ interface restriction.
+- `static/index.html` and `static/style.css`: execution-location status and
+  Version 5.0 cache identifiers.
+- `static/vendor/pyodide/`: pinned local runtime and third-party licence.
+- `test_app.py`, `test_browser_python.mjs`, and `test_execution_matrix.py`:
+  server policy, actual WebAssembly runtime, and Admin C++ regression coverage.
+- `docs/images/`: genuine Version 5.0 interface captures.
+
 ## Version 4.2.1 — Typing Labels and Join-Request Queue
 
 Version 4.2.1 adds a compact identity label to the existing synchronized line-
