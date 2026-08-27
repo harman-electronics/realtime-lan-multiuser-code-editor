@@ -29,6 +29,8 @@ changes, security notes, and previous releases.
 > without a lecturer. Do not expose the development server to the public
 > internet or publish a populated `data` folder. Guest names, code, chats,
 > snapshots, ownership, and permissions are stored locally as readable JSON.
+> **Admin C++ still executes unsandboxed on the host. The Admin must inspect
+> collaborative C++ code before running it.**
 
 > [!IMPORTANT]
 > This is a collaborative prototype, not production authentication. It does
