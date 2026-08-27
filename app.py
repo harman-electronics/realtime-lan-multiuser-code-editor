@@ -11,7 +11,6 @@ import signal
 import shutil
 import socket
 import subprocess
-import sys
 import tempfile
 import time
 import uuid
@@ -1114,6 +1113,16 @@ class ConnectionManager:
         code: str,
         language: str,
     ) -> str:
+        if language != "cpp":
+            raise HTTPException(
+                status_code=422,
+                detail="Python runs locally in the browser and cannot be started on the host.",
+            )
+        if user.get("role") != "admin":
+            raise HTTPException(
+                status_code=403,
+                detail="Only the Admin can execute C++ on the host computer.",
+            )
         if len(code) > MAX_CODE_SIZE:
             raise HTTPException(status_code=413, detail="Code is too large.")
         account_id = str(user.get("account_id", ""))
@@ -1138,7 +1147,7 @@ class ConnectionManager:
                 "account_id": account_id,
                 "connection_id": connection_id,
                 "file_id": file_id,
-                "language": "cpp" if language == "cpp" else "python",
+                "language": "cpp",
                 "started": time.monotonic(),
                 "deadline": time.monotonic() + MAX_INTERACTIVE_EXECUTION_SECONDS,
                 "process": None,
@@ -1182,63 +1191,48 @@ class ConnectionManager:
         status = "failed"
         message = "Program failed."
         try:
-            if execution["language"] == "cpp":
-                source_path = os.path.join(execution["temp_dir"], "main.cpp")
-                output_path = os.path.join(
-                    execution["temp_dir"],
-                    "program.exe" if os.name == "nt" else "program",
-                )
-                with open(source_path, "w", encoding="utf-8") as source_file:
-                    source_file.write(code)
-                compile_returncode = await self._compile_interactive_cpp(
-                    execution,
-                    source_path,
-                    output_path,
-                )
-                if compile_returncode is None or execution.get("stop_reason"):
-                    status = "stopped"
-                    message = execution.get("stop_reason") or "Program stopped."
-                    return
-                if compile_returncode != 0:
-                    returncode = compile_returncode
-                    if execution.get("timed_out"):
-                        status = "timed_out"
-                        message = (
-                            f"Program stopped after {MAX_INTERACTIVE_EXECUTION_SECONDS:g} seconds."
-                        )
-                    elif execution.get("output_limited"):
-                        status = "output_limited"
-                        message = (
-                            f"Program stopped after {MAX_INTERACTIVE_OUTPUT_CHARS:,} "
-                            "output characters."
-                        )
-                    else:
-                        message = "C++ compilation failed."
-                    return
-                await self._send_execution_event(
-                    execution,
-                    {"type": "terminal_status", "message": "Running C++..."},
-                )
-                execution["stage"] = "run"
-                returncode = await self._run_interactive_process(
-                    execution,
-                    [output_path],
-                    cwd=execution["temp_dir"],
-                )
-            else:
-                await self._send_execution_event(
-                    execution,
-                    {"type": "terminal_status", "message": "Running Python..."},
-                )
-                execution["stage"] = "run"
-                python_env = os.environ.copy()
-                python_env["PYTHONIOENCODING"] = "utf-8"
-                returncode = await self._run_interactive_process(
-                    execution,
-                    [sys.executable, "-u", "-I", "-c", code],
-                    cwd=execution["temp_dir"],
-                    env=python_env,
-                )
+            source_path = os.path.join(execution["temp_dir"], "main.cpp")
+            output_path = os.path.join(
+                execution["temp_dir"],
+                "program.exe" if os.name == "nt" else "program",
+            )
+            with open(source_path, "w", encoding="utf-8") as source_file:
+                source_file.write(code)
+            compile_returncode = await self._compile_interactive_cpp(
+                execution,
+                source_path,
+                output_path,
+            )
+            if compile_returncode is None or execution.get("stop_reason"):
+                status = "stopped"
+                message = execution.get("stop_reason") or "Program stopped."
+                return
+            if compile_returncode != 0:
+                returncode = compile_returncode
+                if execution.get("timed_out"):
+                    status = "timed_out"
+                    message = (
+                        f"Program stopped after {MAX_INTERACTIVE_EXECUTION_SECONDS:g} seconds."
+                    )
+                elif execution.get("output_limited"):
+                    status = "output_limited"
+                    message = (
+                        f"Program stopped after {MAX_INTERACTIVE_OUTPUT_CHARS:,} "
+                        "output characters."
+                    )
+                else:
+                    message = "C++ compilation failed."
+                return
+            await self._send_execution_event(
+                execution,
+                {"type": "terminal_status", "message": "Running C++..."},
+            )
+            execution["stage"] = "run"
+            returncode = await self._run_interactive_process(
+                execution,
+                [output_path],
+                cwd=execution["temp_dir"],
+            )
 
             if execution.get("stop_reason"):
                 status = "stopped"
@@ -1298,6 +1292,11 @@ class ConnectionManager:
         user: Dict[str, Any],
         line: Any,
     ) -> None:
+        if user.get("role") != "admin":
+            raise HTTPException(
+                status_code=403,
+                detail="Only the Admin can send input to a host C++ program.",
+            )
         account_id = str(user.get("account_id", ""))
         execution = self.execution_sessions.get(account_id)
         if not execution or execution.get("connection_id") != connection_id:
@@ -2166,22 +2165,6 @@ def parse_execution_problems(
     ]
 
 
-def run_python(code: str, stdin: str, timeout: float) -> Dict[str, Any]:
-    process = subprocess.run(
-        [sys.executable, "-I", "-c", code],
-        input=stdin,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-    )
-    return {
-        "stdout": process.stdout,
-        "stderr": process.stderr,
-        "returncode": process.returncode,
-        "stage": "run",
-    }
-
-
 def run_cpp(code: str, stdin: str, timeout: float) -> Dict[str, Any]:
     compiler = resolve_cpp_compiler()
     if not compiler:
@@ -2236,7 +2219,15 @@ async def run_code(
     request: RunCodeRequest,
     authorization: Optional[str] = Header(default=None),
 ) -> Dict[str, Any]:
-    require_session(authorization)
+    require_session(authorization, role="admin")
+    if request.language != "cpp":
+        raise HTTPException(
+            status_code=410,
+            detail=(
+                "Server-side Python execution has been removed. "
+                "Run Python from the browser workspace."
+            ),
+        )
     if len(request.code) > MAX_CODE_SIZE:
         raise HTTPException(status_code=413, detail="Code is too large.")
     if len(request.stdin) > MAX_STDIN_SIZE:
@@ -2247,11 +2238,7 @@ async def run_code(
     timeout = min(max(request.timeout or 5.0, 1.0), 10.0)
     started = time.time()
     try:
-        result = (
-            run_cpp(request.code, request.stdin, timeout)
-            if request.language == "cpp"
-            else run_python(request.code, request.stdin, timeout)
-        )
+        result = run_cpp(request.code, request.stdin, timeout)
         result.update(
             {
                 "elapsed": round(time.time() - started, 3),
@@ -2423,6 +2410,22 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str) -> None:
                         {"type": "terminal_error", "message": "Choose a valid code file first."}
                     )
                     continue
+                if file_data.get("language") != "cpp":
+                    await websocket.send_json(
+                        {
+                            "type": "terminal_error",
+                            "message": "Python runs locally in the browser, not on the host.",
+                        }
+                    )
+                    continue
+                if user.get("role") != "admin":
+                    await websocket.send_json(
+                        {
+                            "type": "terminal_error",
+                            "message": "Only the Admin can execute C++ on the host computer.",
+                        }
+                    )
+                    continue
                 try:
                     await manager.start_interactive_execution(
                         client_id,
@@ -2446,6 +2449,14 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str) -> None:
                     )
 
             elif message_type == "terminal_input":
+                if user.get("role") != "admin":
+                    await websocket.send_json(
+                        {
+                            "type": "terminal_error",
+                            "message": "Only the Admin can send C++ terminal input.",
+                        }
+                    )
+                    continue
                 try:
                     await manager.send_interactive_input(
                         client_id,
@@ -2458,6 +2469,14 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str) -> None:
                     )
 
             elif message_type == "terminal_stop":
+                if user.get("role") != "admin":
+                    await websocket.send_json(
+                        {
+                            "type": "terminal_error",
+                            "message": "Only the Admin can control host C++ programs.",
+                        }
+                    )
+                    continue
                 stopped = await manager.stop_interactive_execution(
                     client_id,
                     user,
