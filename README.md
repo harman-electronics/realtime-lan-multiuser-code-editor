@@ -2,21 +2,23 @@
 
 A real-time LAN code editor for Python and C++ with collaborative editing,
 line ownership, Admin-approved Guest access, chat, appearance controls, and
-host-side code execution. Changes, presence, messages, permissions, and file
-updates are synchronized for connected users in real time.
+safer split execution. Python runs inside each participant's browser, while
+only the Admin can execute C++ on the trusted host. Changes, presence,
+messages, permissions, and file updates are synchronized in real time.
 
-## Version 4.2.1 — Typing Labels and Join-Request Queue
+## Version 5.0 — Browser Python and Admin-Only C++
 
-Version 4.2.1 shows who is actively editing each code line. A compact label such
-as **Bob is typing** appears three character spaces after Bob's caret on the
-exact line, uses Bob's selected colour, and shares the line's subtle colour
-highlight. The label disappears when Bob stops typing, changes lines or files,
-or disconnects. Remote cursors remain name-free.
+Version 5.0 removes server-side Python execution. Admins and Guests run Python
+3.14 in a dedicated Pyodide WebAssembly worker on their own browser, including
+interactive terminal input and Stop control. The pinned runtime is served by
+the LAN host, so connected devices do not need Python, Docker, or a separate
+runner installed.
 
-Admin join requests now open in a noticeable bell popover and are handled in
-oldest-first order. Only the first request has **Accept** and **Reject** buttons;
-after the Admin decides, the next waiting Guest becomes actionable. Queued
-requests show **Now**, elapsed minutes, or the request time as appropriate.
+C++ remains a host feature temporarily. The Admin can compile, run, stop, and
+enter C++ terminal input. Guests may create and collaboratively edit C++ files,
+but their Run button is disabled. Both the REST compatibility route and live
+WebSocket enforce the same rule, so hiding the button is not the security
+boundary.
 
 Read the [changelog](CHANGELOG.md) for the complete feature history, detailed
 changes, security notes, and previous releases.
@@ -30,32 +32,25 @@ changes, security notes, and previous releases.
 
 > [!IMPORTANT]
 > This is a collaborative prototype, not production authentication. It does
-> not provide HTTPS, university SSO, encrypted storage, or a complete code-
-> execution sandbox. Every person allowed to run code on the host must be
-> trusted.
+> not provide HTTPS, university SSO, or encrypted storage. Browser Python is
+> isolated from the host operating system, but Admin C++ still executes on the
+> host without a complete sandbox. Keep the Admin account trusted.
 
-### Version 4.2.1 light theme and interactive terminal
+### Version 5.0 light theme and browser Python terminal
 
-![Version 4.2.1 light theme with an exact-line typing label](docs/images/version-4.2.1-default-light.png)
+![Version 5.0 light theme running interactive Python in the browser](docs/images/version-5.0-browser-python-light.png)
 
-### Version 4.2.1 dark theme and interactive terminal
+### Version 5.0 dark theme and browser Python terminal
 
-![Version 4.2.1 dark theme with an exact-line typing label](docs/images/version-4.2.1-default-dark.png)
+![Version 5.0 dark theme running interactive Python in the browser](docs/images/version-5.0-browser-python-dark.png)
 
-### Version 4.2.1 FIFO Guest join-request queue
+### Guest C++ editing with execution disabled
 
-![Version 4.2.1 Admin bell popover with one actionable request and four queued requests](docs/images/version-4.2.1-join-request-queue.png)
+![Version 5.0 Guest C++ tab with Admin-only execution](docs/images/version-5.0-guest-cpp-restricted.png)
 
-### Version 4.2.1 dark theme with a fitted wallpaper
-
-![Version 4.2.1 dark theme with a fitted local wallpaper and exact-line typing label](docs/images/version-4.2.1-wallpaper-dark-fit.png)
-
-The wallpaper example uses **Fit**, **5% background dimming**, **98% wallpaper
-visibility**, and **2px panel blur**. Wallpaper images and appearance settings
-are saved only in the current browser on that PC and are not synchronized. All
-four screenshots above were captured from the working Version 4.2.1 interface;
-the terminal shows submitted input in blue and successful status messages in
-yellow, while red is reserved for errors and failed limits.
+All screenshots above were captured from the working Version 5.0 feature
+branch. Submitted terminal input is blue, successful status messages are
+yellow, and red remains reserved for errors and failed limits.
 
 ## Main features
 
@@ -64,8 +59,9 @@ yellow, while red is reserved for errors and failed limits.
 - Real-time multi-file Python and C++ collaboration over a LAN
 - Persistent line ownership, blank-line claiming, and code-access permissions
 - Up to 15 Admin-configurable Python and C++ file tabs
-- Live interactive terminal input, streamed output, Stop control, detailed
-  errors, and restorable code snapshots
+- Browser-side Python 3.14 with interactive input, output limits, Stop control,
+  and no access to the host operating system
+- Admin-only host C++17 execution with Guest C++ collaboration kept editable
 - Group Chat and Direct Messages with unread alerts, editing, and deletion
 - One active session per approved Guest and Admin removal controls
 - Adjustable full-screen workspace, terminal, chat, and Admin Settings panels
@@ -106,6 +102,11 @@ python app.py
 Open `http://localhost:8000` on the host. Trusted devices on the same LAN can
 open the Wi-Fi address shown in CMD or scan the displayed QR code.
 
+The Python WebAssembly runtime is served locally by this project. The current
+interface still loads CodeMirror, Lucide icons, Google Fonts, and QRCode from
+public CDNs, so an internet connection is currently needed for the complete
+interface on its first load. Fully offline LAN support is not finished yet.
+
 ## Demonstration login
 
 1. Select **Admin**, enter password `12345`, and log in.
@@ -132,11 +133,12 @@ python app.py
 This is safer than editing the default value in `app.py` and avoids committing
 a personal password to GitHub.
 
-## Interactive terminal input
+## Running Python in the browser
 
-Select **Run Python** or **Compile & Run C++**. When the program asks for a
-value, type it in the terminal input row and press `Enter` or select **Send**.
-The program remains active for later prompts, just like a normal terminal.
+Admins and approved Guests can select **Run Python**. The first run loads the
+approximately 13.5 MB local WebAssembly runtime from the LAN host; later runs
+reuse the worker while the page remains open. When the program requests a
+value, type it in the terminal row and press `Enter` or select **Send**.
 
 For separate Python `input()` calls, send one value at each prompt:
 
@@ -146,17 +148,33 @@ For separate Python `input()` calls, send one value at each prompt:
 ```
 
 Entering `10 5` on one line gives the first Python `input()` call the complete
-text. C++ `std::cin` accepts either `10 5` on one line or values on separate
-lines. Each account can run one program at a time on the host. The safeguards
-are 60 seconds per run, 100,000 output characters, 4,096 characters per input
-line, 20,000 input characters per run, 20 active runs across the host, and four
-simultaneous C++ compilations.
+text. The browser worker replays the isolated program with the collected input
+values whenever another value is submitted. This supports ordinary learning
+programs, loops, functions, and classes, but nondeterministic code may produce
+a different earlier value during a replay. Select **Stop** to destroy the
+worker immediately.
+
+Browser Python limits are 60 seconds per run, 100,000 output characters, 4,096
+characters per input line, and 20,000 input characters per run.
+
+## Running C++ as Admin
+
+Only the Admin can select **Compile & Run C++** or send C++ terminal input.
+Guests can still open, create, and collaboratively edit C++ files, but the Run
+button displays **Admin-only execution** and remains disabled. This temporary
+restriction prevents Guest code from executing operating-system commands on
+the Admin computer.
+
+C++ `std::cin` accepts either `10 5` on one line or values on separate lines.
+Host safeguards remain 60 seconds per run, 100,000 output characters, one
+active Admin run, and up to four simultaneous compiler processes.
 
 ## C++ compiler and libraries
 
-C++ compilation happens on the host; connected users do not need their own
-compiler. The runner searches for `g++`, then `clang++`, and uses C++17. It was
-tested with `g++`. Check the host from CMD:
+C++ compilation happens on the Admin host; connected Guests do not need their
+own compiler because they cannot execute C++ in this version. The runner
+searches for `g++`, then `clang++`, and uses C++17. It was tested with `g++`.
+Check the host from CMD:
 
 ```cmd
 g++ --version
@@ -181,32 +199,30 @@ command options. Standard headers such as `<iostream>`, `<vector>`,
 
 ## Python libraries
 
-Standard-library imports work automatically. Install a trusted third-party
-package into the same Python environment used to run the server:
-
-```cmd
-python -m pip install package-name
-python app.py
-```
-
-Installed packages were verified through the authenticated runner. Separate
-Python workspace tabs cannot currently import one another. GUI, hardware, and
-operating-system-specific packages may need additional host configuration.
+Python standard-library imports work inside the browser runtime, including
+modules such as `math`, `json`, `statistics`, and `collections`. Packages
+installed in the host virtual environment are intentionally **not** visible to
+browser Python. Third-party Pyodide package files are not bundled yet, and
+separate Python workspace tabs cannot currently import one another.
 
 ## Testing
 
-Version 4.2.1 passed **20/20 permanent automated tests** and **12/12 Python/C++
-execution-matrix tests**, including live Python and C++ terminal input, stopping
-a waiting process, FIFO Guest approval, out-of-order request protection,
-permissions, messaging, imports, loops, functions, recursion, classes, errors,
-timeouts, Unicode, and real C++17 STL compilation.
+Version 5.0 passed **20/20 permanent automated tests** and **12/12 execution-
+matrix checks**. Eight matrix checks run against the real pinned Pyodide engine
+and cover browser isolation, interactive input, imports, loops, functions,
+recursion, classes, errors, and output limits. Four checks verify Admin C++17
+STL compilation, input, compiler errors, and timeouts. Live Admin and Guest
+browser tests also completed without console errors.
 
 ```cmd
 python test_app.py
 python test_execution_matrix.py
+node test_browser_python.mjs
 ```
 
-Both suites use isolated temporary data and do not modify committed records.
+The server tests use isolated temporary data and do not modify committed
+records. The Node check loads the same local WebAssembly runtime used by the
+browser and does not start the application server.
 
 ## Stopping, upgrading, and mobile access
 
@@ -228,17 +244,22 @@ orientation and **Desktop site** mode usually provide a better layout.
 ├── app.py
 ├── requirements.txt
 ├── test_app.py
+├── test_browser_python.mjs
 ├── test_execution_matrix.py
 ├── data/                    # Local JSON workspace and collaboration state
 ├── docs/
 │   └── images/             # Release screenshots
-└── static/                 # HTML, CSS, JavaScript, and icons
+└── static/
+    ├── python-runtime.mjs   # Browser Python execution and input replay
+    ├── python-worker.mjs    # Disposable Web Worker controller
+    └── vendor/pyodide/      # Pinned local Pyodide 314.0.5 runtime
 ```
 
 ## Technology
 
 Python, FastAPI, Uvicorn, WebSockets, HTML, CSS, JavaScript, CodeMirror 5,
-Lucide icons, QRCode, Pillow, and a supported C++ compiler.
+Pyodide 314.0.5, WebAssembly, Web Workers, Lucide icons, QRCode, Pillow, and a
+supported C++ compiler.
 
 ## Credits
 
@@ -249,4 +270,6 @@ and repeated testing.
 ## Licence
 
 No open-source licence has been selected. Reuse or redistribution requires
-permission from the respective contributors.
+permission from the respective contributors. The vendored Pyodide runtime is
+separately licensed under the Mozilla Public License 2.0; its licence is kept
+in `static/vendor/pyodide/LICENSE`.
