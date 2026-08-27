@@ -1,6 +1,11 @@
 import shutil
+import subprocess
+from pathlib import Path
 
 from test_app import LiveEditorTestCase
+
+
+ROOT_DIR = Path(__file__).resolve().parent
 
 
 def run_execution_matrix():
@@ -8,14 +13,14 @@ def run_execution_matrix():
     harness.setUp()
     results = []
 
-    def run_program(code, language="python", stdin="", timeout=5):
+    def run_cpp(code, stdin="", timeout=5):
         token = harness.login_admin()
         response = harness.client.post(
             "/api/run",
             headers=harness.auth_header(token),
             json={
                 "code": code,
-                "language": language,
+                "language": "cpp",
                 "stdin": stdin,
                 "timeout": timeout,
             },
@@ -29,123 +34,65 @@ def run_execution_matrix():
         print(f"PASS {len(results):02d}/12: {name}")
 
     try:
-        check(
-            "Python for/while/conditions",
-            lambda: _assert_output(
-                run_program(
-                    "total = 0\n"
-                    "for number in range(6):\n"
-                    "    if number % 2 == 0: total += number\n"
-                    "count = 2\n"
-                    "while count: total += 1; count -= 1\n"
-                    "print(total)\n"
-                ),
-                "8",
-            ),
+        node = shutil.which("node")
+        assert node, "The browser-Python matrix requires Node.js."
+        browser_python = subprocess.run(
+            [node, str(ROOT_DIR / "test_browser_python.mjs")],
+            cwd=ROOT_DIR,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
         )
-        check(
-            "Python functions and recursion",
-            lambda: _assert_output(
-                run_program(
-                    "def factorial(value):\n"
-                    "    return 1 if value <= 1 else value * factorial(value - 1)\n"
-                    "print(factorial(6))\n"
-                ),
-                "720",
-            ),
+        assert browser_python.returncode == 0, (
+            browser_python.stdout + browser_python.stderr
         )
-        check(
-            "Python classes and comprehensions",
-            lambda: _assert_output(
-                run_program(
-                    "class Box:\n"
-                    "    def __init__(self, value): self.value = value\n"
-                    "print([Box(number).value ** 2 for number in range(4)])\n"
-                ),
-                "[0, 1, 4, 9]",
-            ),
-        )
-        check(
-            "Python standard-library imports",
-            lambda: _assert_output(
-                run_program(
-                    "import json, math, statistics\n"
-                    "from collections import Counter\n"
-                    "print(json.dumps({'root': math.isqrt(81), 'mean': statistics.mean([2, 4]), 'a': Counter('banana')['a']}, sort_keys=True))\n"
-                ),
-                '{"a": 3, "mean": 3, "root": 9}',
-            ),
-        )
-        check(
-            "Installed third-party Python import",
-            lambda: _assert_output(
-                run_program("import qrcode\nprint(qrcode.__package__)\n"),
-                "qrcode",
-            ),
-        )
-        check(
-            "Python multiple input and Unicode",
-            lambda: _assert_output(
-                run_program(
-                    "name = input().strip()\n"
-                    "first, second = map(int, input().split())\n"
-                    "print(f'Kia ora, {name}! {first + second}')\n",
-                    stdin="Aroha\n10 5\n",
-                ),
-                "Kia ora, Aroha! 15",
-            ),
-        )
-        check(
-            "Expected Python runtime and syntax errors",
-            lambda: _assert_python_errors(run_program),
-        )
-        check(
-            "Python timeout",
-            lambda: _assert_timeout(
-                run_program("while True:\n    pass\n", timeout=1)
-            ),
-        )
+        browser_checks = [
+            line.split(": ", 1)[1]
+            for line in browser_python.stdout.splitlines()
+            if line.startswith("PASS ") and ": " in line
+        ]
+        assert len(browser_checks) == 8, browser_python.stdout
+        for name in browser_checks:
+            results.append(name)
+            print(f"PASS {len(results):02d}/12: {name}")
 
         compiler = shutil.which("g++") or shutil.which("clang++")
         assert compiler, "The C++ matrix requires g++ or clang++."
         check(
-            "C++ functions, loops, and STL",
+            "Admin C++ functions loops and STL",
             lambda: _assert_output(
-                run_program(
+                run_cpp(
                     "#include <algorithm>\n#include <iostream>\n#include <vector>\n"
                     "int twice(int value) { return value * 2; }\n"
-                    "int main() { std::vector<int> values{3,1,2}; std::sort(values.begin(), values.end()); int total=0; for(int value:values) total+=twice(value); int count=2; while(count){++total;--count;} std::cout<<total; }\n",
-                    language="cpp",
+                    "int main() { std::vector<int> values{3,1,2}; std::sort(values.begin(), values.end()); int total=0; for(int value:values) total+=twice(value); int count=2; while(count){++total;--count;} std::cout<<total; }\n"
                 ),
                 "14",
             ),
         )
         check(
-            "C++ standard input",
+            "Admin C++ standard input",
             lambda: _assert_output(
-                run_program(
+                run_cpp(
                     "#include <iostream>\nint main(){int first=0,second=0;std::cin>>first>>second;std::cout<<first+second;}\n",
-                    language="cpp",
                     stdin="20 22\n",
                 ),
                 "42",
             ),
         )
         check(
-            "Expected C++ compile error",
+            "Expected Admin C++ compile error",
             lambda: _assert_cpp_compile_error(
-                run_program(
-                    "#include <iostream>\nint main(){ this is not valid C++; }\n",
-                    language="cpp",
+                run_cpp(
+                    "#include <iostream>\nint main(){ this is not valid C++; }\n"
                 )
             ),
         )
         check(
-            "C++ timeout",
+            "Admin C++ timeout",
             lambda: _assert_timeout(
-                run_program(
+                run_cpp(
                     "int main(){while(true){}}\n",
-                    language="cpp",
                     timeout=1,
                 )
             ),
@@ -159,15 +106,6 @@ def run_execution_matrix():
 def _assert_output(result, expected):
     assert result["returncode"] == 0, result.get("stderr")
     assert result["stdout"].strip() == expected, result
-
-
-def _assert_python_errors(run_program):
-    runtime_error = run_program("raise ValueError('expected failure')\n")
-    assert runtime_error["returncode"] != 0
-    assert "ValueError: expected failure" in runtime_error["stderr"]
-    syntax_error = run_program("def broken(:\n    pass\n")
-    assert syntax_error["returncode"] != 0
-    assert "SyntaxError" in syntax_error["stderr"]
 
 
 def _assert_cpp_compile_error(result):

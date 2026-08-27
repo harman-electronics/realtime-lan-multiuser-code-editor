@@ -329,7 +329,7 @@ class LiveEditorTestCase(unittest.TestCase):
         self.assertIn("Next request opens after a decision", html)
         self.assertIn(".join-request-popover-row.is-active", stylesheet)
         self.assertIn(".join-request-popover-row.is-queued", stylesheet)
-        self.assertIn("4.2.1-join-request-queue-2", html)
+        self.assertIn("5.0-browser-python-2", html)
 
     def test_manual_student_creation_is_removed_and_admin_can_remove_guest(self):
         admin_token = self.login_admin()
@@ -630,82 +630,62 @@ class LiveEditorTestCase(unittest.TestCase):
         self.assertEqual(response.json()["username"], "Professor Ada")
         self.assertEqual(self.manager.get_session(admin_token)["role"], "admin")
 
-    def test_python_execution_requires_login(self):
+    def test_host_execution_allows_only_admin_cpp(self):
         unauthenticated = self.client.post(
             "/api/run",
             json={"code": "print('blocked')", "language": "python"},
         )
         self.assertEqual(unauthenticated.status_code, 401)
 
-        token = self.login_admin()
-        response = self.client.post(
+        admin_token = self.login_admin()
+        python_response = self.client.post(
             "/api/run",
-            headers=self.auth_header(token),
+            headers=self.auth_header(admin_token),
             json={"code": "print('working')", "language": "python"},
         )
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["stdout"].strip(), "working")
+        self.assertEqual(python_response.status_code, 410)
+        self.assertIn("browser", python_response.json()["detail"].lower())
 
-        input_response = self.client.post(
+        guest = self.approve_guest("Browser Bob", admin_token)
+        guest_cpp = self.client.post(
             "/api/run",
-            headers=self.auth_header(token),
+            headers=self.auth_header(guest["token"]),
             json={
-                "code": "name = input()\nprint(f'Hello, {name}!')",
-                "language": "python",
-                "stdin": "LAN guest\n",
+                "code": "int main() { return 0; }",
+                "language": "cpp",
             },
         )
-        self.assertEqual(input_response.status_code, 200, input_response.text)
-        self.assertEqual(input_response.json()["stdout"].strip(), "Hello, LAN guest!")
+        self.assertEqual(guest_cpp.status_code, 403)
+        self.assertIn("Admin", guest_cpp.json()["detail"])
 
         oversized_input = self.client.post(
             "/api/run",
-            headers=self.auth_header(token),
+            headers=self.auth_header(admin_token),
             json={
-                "code": "print('blocked')",
-                "language": "python",
+                "code": "int main() { return 0; }",
+                "language": "cpp",
                 "stdin": "x" * (app_module.MAX_STDIN_SIZE + 1),
             },
         )
         self.assertEqual(oversized_input.status_code, 413)
 
-    def test_python_control_flow_functions_classes_and_imports(self):
-        token = self.login_admin()
-        response = self.client.post(
-            "/api/run",
-            headers=self.auth_header(token),
-            json={
-                "language": "python",
-                "code": (
-                    "import math\n"
-                    "from collections import Counter\n"
-                    "def factorial(value):\n"
-                    "    return 1 if value <= 1 else value * factorial(value - 1)\n"
-                    "class Greeter:\n"
-                    "    def __init__(self, name):\n"
-                    "        self.name = name\n"
-                    "    def message(self):\n"
-                    "        return f'Hello, {self.name}!'\n"
-                    "total = 0\n"
-                    "for number in range(1, 5):\n"
-                    "    if number % 2 == 0:\n"
-                    "        total += number\n"
-                    "remaining = 2\n"
-                    "while remaining > 0:\n"
-                    "    total += 1\n"
-                    "    remaining -= 1\n"
-                    "print(factorial(5))\n"
-                    "print(Greeter('Bob').message())\n"
-                    "print(total, math.isqrt(81), Counter('banana')['a'])\n"
-                ),
-            },
-        )
-        self.assertEqual(response.status_code, 200, response.text)
-        result = response.json()
-        self.assertEqual(result["returncode"], 0, result.get("stderr"))
-        self.assertEqual(result["stdout"].strip(), "120\nHello, Bob!\n8 9 3")
+    def test_browser_python_runtime_is_local_and_pinned(self):
+        static_directory = Path(app_module.STATIC_DIR)
+        runtime = (static_directory / "python-runtime.mjs").read_text(encoding="utf-8")
+        worker = (static_directory / "python-worker.mjs").read_text(encoding="utf-8")
+        javascript = (static_directory / "app.js").read_text(encoding="utf-8")
+        html = (static_directory / "index.html").read_text(encoding="utf-8")
 
-    def test_interactive_python_terminal_accepts_live_input_and_stop(self):
+        self.assertTrue((static_directory / "vendor" / "pyodide" / "pyodide.asm.wasm").is_file())
+        self.assertTrue((static_directory / "vendor" / "pyodide" / "python_stdlib.zip").is_file())
+        self.assertIn("BROWSER_PYTHON_VERSION = '314.0.5'", runtime)
+        self.assertIn("replayBrowserPython", runtime)
+        self.assertIn("new Worker('/static/python-worker.mjs?v=5.0-browser-python-2'", javascript)
+        self.assertIn("Runs in this browser", html)
+        self.assertNotIn("cdn.jsdelivr.net", runtime)
+        self.assertIn("runtime_loading", worker)
+
+    def test_websocket_host_execution_rejects_python_and_guest_cpp(self):
         self.assertEqual(app_module.MAX_INTERACTIVE_EXECUTION_SECONDS, 60.0)
         self.assertEqual(app_module.MAX_INTERACTIVE_OUTPUT_CHARS, 100_000)
         self.assertEqual(app_module.MAX_INTERACTIVE_EXECUTIONS, 20)
@@ -727,41 +707,22 @@ class LiveEditorTestCase(unittest.TestCase):
                     ),
                 }
             )
-            started, _ = self.receive_websocket_type(websocket, "terminal_started")
-            self.assertEqual(started["limits"]["execution_seconds"], 60.0)
-            self.receive_websocket_type(websocket, "terminal_ready")
+            blocked, _ = self.receive_websocket_type(websocket, "terminal_error")
+            self.assertIn("browser", blocked["message"].lower())
 
-            websocket.send_json({"type": "terminal_input", "text": "10"})
-            self.receive_websocket_type(websocket, "terminal_input_echo")
-            websocket.send_json({"type": "terminal_input", "text": "5"})
-            finished, messages = self.receive_websocket_type(
-                websocket,
-                "terminal_finished",
-            )
-            output = "".join(
-                message.get("text", "")
-                for message in messages
-                if message.get("type") == "terminal_output"
-            )
-            self.assertIn("Total: 15", output)
-            self.assertEqual(finished["status"], "completed")
-            self.assertEqual(finished["returncode"], 0)
-
+        cpp_file = self.manager.create_file("guest-blocked.cpp", "cpp")
+        guest = self.approve_guest("Guest Cpp", token)
+        with self.client.websocket_connect("/ws/guest_cpp_blocked") as websocket:
+            self.join_admin_websocket(websocket, guest["token"])
             websocket.send_json(
                 {
                     "type": "terminal_run",
-                    "file_id": "file_main",
-                    "code": "input('Waiting: ')\n",
+                    "file_id": cpp_file["id"],
+                    "code": "int main() { return 0; }",
                 }
             )
-            self.receive_websocket_type(websocket, "terminal_started")
-            self.receive_websocket_type(websocket, "terminal_ready")
-            websocket.send_json({"type": "terminal_stop"})
-            stopped, _ = self.receive_websocket_type(
-                websocket,
-                "terminal_finished",
-            )
-            self.assertEqual(stopped["status"], "stopped")
+            blocked, _ = self.receive_websocket_type(websocket, "terminal_error")
+            self.assertIn("Only the Admin", blocked["message"])
 
         html = (Path(app_module.STATIC_DIR) / "index.html").read_text(
             encoding="utf-8"
@@ -779,7 +740,11 @@ class LiveEditorTestCase(unittest.TestCase):
         self.assertIn("stream === 'status'", javascript)
         self.assertIn("TERMINAL_HEIGHT_STORAGE_KEY", javascript)
         self.assertIn("initializeTerminalResize", javascript)
+        self.assertIn("runBrowserPython", javascript)
+        self.assertIn("stopBrowserPython", javascript)
+        self.assertIn("Admin-only execution", javascript)
         self.assertIn(".terminal-status", stylesheet)
+        self.assertIn(".execution-mode-tag", stylesheet)
         self.assertIn(".terminal-resize-handle", stylesheet)
         self.assertIn("color: var(--warning-color);", stylesheet)
 
@@ -937,13 +902,19 @@ class LiveEditorTestCase(unittest.TestCase):
             self.assertIsNone(self.manager.get_chat_message(message_id))
 
     def test_execution_problem_parsers_keep_source_details(self):
-        token = self.login_admin()
-        response = self.client.post(
-            "/api/run",
-            headers=self.auth_header(token),
-            json={"code": "print(missing_name)", "language": "python"},
+        python_problems = app_module.parse_execution_problems(
+            {
+                "stderr": (
+                    "Traceback (most recent call last):\n"
+                    "  File \"<string>\", line 1, in <module>\n"
+                    "NameError: name 'missing_name' is not defined\n"
+                ),
+                "returncode": 1,
+                "stage": "run",
+            },
+            "python",
         )
-        problem = response.json()["problems"][0]
+        problem = python_problems[0]
         self.assertEqual(problem["type"], "NameError")
         self.assertEqual(problem["line"], 1)
 
@@ -990,7 +961,7 @@ class LiveEditorTestCase(unittest.TestCase):
         self.assertIn("margin-left: 3ch;", stylesheet)
         self.assertIn(".remote-cursor > .line-typing-badge", stylesheet)
         self.assertIn("left: 3ch;", stylesheet)
-        self.assertIn("4.2.1-join-request-queue-2", html)
+        self.assertIn("5.0-browser-python-2", html)
 
 
 if __name__ == "__main__":
