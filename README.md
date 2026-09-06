@@ -3,22 +3,23 @@
 A real-time LAN code editor for Python and C++ with collaborative editing,
 line ownership, Admin-approved Guest access, chat, appearance controls, and
 safer split execution. Python runs inside each participant's browser, while
-only the Admin can execute C++ on the trusted host. Changes, presence,
-messages, permissions, and file updates are synchronized in real time.
+only the Admin can execute C++ inside a restricted Docker container. Changes,
+presence, messages, permissions, and file updates are synchronized in real
+time.
 
-## Version 5.0 — Browser Python and Admin-Only C++
+## Version 5.1 — Docker-Isolated C++ Execution
 
-Version 5.0 removes server-side Python execution. Admins and Guests run Python
-3.14 in a dedicated Pyodide WebAssembly worker on their own browser, including
-interactive terminal input and Stop control. The pinned runtime is served by
-the LAN host, so connected devices do not need Python, Docker, or a separate
-runner installed.
+Version 5.1 replaces direct host C++ execution with one disposable Linux
+container for every run. The container compiles and runs as a non-root user
+with no network, no Linux capabilities, a read-only root filesystem, a
+read-only source mount, and strict memory, CPU, process, workspace, time, and
+output limits. It is removed automatically after the program finishes or is
+stopped.
 
-C++ remains a host feature temporarily. The Admin can compile, run, stop, and
-enter C++ terminal input. Guests may create and collaboratively edit C++ files,
-but their Run button is disabled. Both the REST compatibility route and live
-WebSocket enforce the same rule, so hiding the button is not the security
-boundary.
+Browser Python remains unchanged and continues to run on each participant's
+device. C++ execution and terminal input remain Admin-only for now; Guests can
+still create and collaboratively edit C++ files. Only the Admin host needs
+Docker Desktop and WSL 2—connected users do not install Docker or a compiler.
 
 Read the [changelog](CHANGELOG.md) for the complete feature history, detailed
 changes, security notes, and previous releases.
@@ -29,30 +30,33 @@ changes, security notes, and previous releases.
 > without a lecturer. Do not expose the development server to the public
 > internet or publish a populated `data` folder. Guest names, code, chats,
 > snapshots, ownership, and permissions are stored locally as readable JSON.
-> **Admin C++ still executes unsandboxed on the host. The Admin must inspect
-> collaborative C++ code before running it.**
+> Docker significantly reduces the risk from C++ code, but it is not a perfect
+> security boundary. The Admin must still inspect collaborative C++ code before
+> running it and keep Docker Desktop updated.
 
 > [!IMPORTANT]
 > This is a collaborative prototype, not production authentication. It does
 > not provide HTTPS, university SSO, or encrypted storage. Browser Python is
-> isolated from the host operating system, but Admin C++ still executes on the
-> host without a complete sandbox. Keep the Admin account trusted.
+> isolated from the host operating system, while C++ is isolated in Docker.
+> Keep the Admin account and LAN trusted and never expose the development server
+> to the public internet.
 
-### Version 5.0 light theme and browser Python terminal
+### Version 5.1 light theme and Docker C++ terminal
 
-![Version 5.0 light theme running interactive Python in the browser](docs/images/version-5.0-browser-python-light.png)
+![Version 5.1 light theme running interactive C++ in Docker](docs/images/version-5.1-docker-cpp-light.png)
 
-### Version 5.0 dark theme and browser Python terminal
+### Version 5.1 dark theme and Docker C++ terminal
 
-![Version 5.0 dark theme running interactive Python in the browser](docs/images/version-5.0-browser-python-dark.png)
+![Version 5.1 dark theme running interactive C++ in Docker](docs/images/version-5.1-docker-cpp-dark.png)
 
 ### Guest C++ editing with execution disabled
 
-![Version 5.0 Guest C++ tab with Admin-only execution](docs/images/version-5.0-guest-cpp-restricted.png)
+![Version 5.1 Guest C++ tab with Admin-only Docker execution](docs/images/version-5.1-guest-cpp-restricted.png)
 
-All screenshots above were captured from the working Version 5.0 feature
-branch. Submitted terminal input is blue, successful status messages are
-yellow, and red remains reserved for errors and failed limits.
+All screenshots above were captured from the working Version 5.1 feature
+branch. The terminal shows the real `10 5` input and `Total: 15` result from a
+restricted container. Submitted terminal input is blue, successful status
+messages are yellow, and red remains reserved for errors and failed limits.
 
 ## Main features
 
@@ -63,7 +67,7 @@ yellow, and red remains reserved for errors and failed limits.
 - Up to 15 Admin-configurable Python and C++ file tabs
 - Browser-side Python 3.14 with interactive input, output limits, Stop control,
   and no access to the host operating system
-- Admin-only host C++17 execution with Guest C++ collaboration kept editable
+- Admin-only C++17 execution in disposable restricted Docker containers
 - Group Chat and Direct Messages with unread alerts, editing, and deletion
 - One active session per approved Guest and Admin removal controls
 - Adjustable full-screen workspace, terminal, chat, and Admin Settings panels
@@ -95,7 +99,27 @@ source .venv/bin/activate
 python -m pip install -r requirements.txt
 ```
 
-### 3. Start the server
+### 3. Prepare Docker C++ execution
+
+Install Docker Desktop with its WSL 2 Linux engine on the Admin computer, open
+Docker Desktop, and wait for the engine to start. A Docker account is not
+required. Then run this once from the project folder:
+
+```cmd
+setup-docker.cmd
+```
+
+This builds the pinned local `wifi-codeshare-cpp-runner:1.0` image. Python and
+the rest of the editor can still start if Docker is unavailable, but C++ Run
+will show a clear setup or engine error.
+
+On macOS or Linux, build the same image with:
+
+```bash
+docker build --pull --tag wifi-codeshare-cpp-runner:1.0 docker/cpp-runner
+```
+
+### 4. Start the server
 
 ```cmd
 python app.py
@@ -163,41 +187,43 @@ characters per input line, and 20,000 input characters per run.
 
 Only the Admin can select **Compile & Run C++** or send C++ terminal input.
 Guests can still open, create, and collaboratively edit C++ files, but the Run
-button displays **Admin-only execution** and remains disabled. This temporary
+button displays **Admin-only Docker execution** and remains disabled. This temporary
 restriction prevents Guest code from executing operating-system commands on
 the Admin computer.
 
 C++ `std::cin` accepts either `10 5` on one line or values on separate lines.
-Host safeguards remain 60 seconds per run, 100,000 output characters, one
-active Admin run, and up to four simultaneous compiler processes.
+Each run uses a new container with a 60-second execution limit, 100,000 output
+characters, 512 MB RAM, one CPU, 64 processes, and a 128 MB temporary
+workspace. Only one interactive Admin run is allowed at a time, and the server
+allows no more than four C++ containers concurrently through all execution
+paths.
 
 ## C++ compiler and libraries
 
-C++ compilation happens on the Admin host; connected Guests do not need their
-own compiler because they cannot execute C++ in this version. The runner
-searches for `g++`, then `clang++`, and uses C++17. It was tested with `g++`.
-Check the host from CMD:
+C++ compilation happens inside the pinned `gcc:14.2.0-bookworm` Docker image,
+not through a compiler installed on Windows. Connected Guests therefore need
+neither Docker nor their own compiler. Verify the Admin setup from CMD:
 
 ```cmd
-g++ --version
-clang++ --version
+docker version
+docker image inspect wifi-codeshare-cpp-runner:1.0
 ```
 
-To configure a compatible compiler executable manually:
+To rebuild the execution image after changing its Dockerfile or runner:
 
 ```cmd
-set "LIVE_EDITOR_CPP_COMPILER=C:\path\to\g++.exe"
-python app.py
+setup-docker.cmd
 ```
 
-Microsoft `cl.exe` is not currently supported because it requires different
-command options. Standard headers such as `<iostream>`, `<vector>`,
-`<algorithm>`, and `<string>` work with the configured compiler.
+Standard GCC headers such as `<iostream>`, `<vector>`, `<algorithm>`, and
+`<string>` are available inside the image. Microsoft `cl.exe` is not used.
 
 > [!IMPORTANT]
 > Third-party C++ libraries that need extra include paths, library paths,
 > linker flags, or multi-file builds are not automatically supported. The
-> current runner compiles one source file with fixed GCC/Clang-style options.
+> current image compiles one source file with fixed GCC C++17 options. Extra
+> libraries should be added to a reviewed custom Docker image, never installed
+> directly in response to code submitted by a user.
 
 ## Python libraries
 
@@ -209,12 +235,12 @@ separate Python workspace tabs cannot currently import one another.
 
 ## Testing
 
-Version 5.0 passed **20/20 permanent automated tests** and **12/12 execution-
-matrix checks**. Eight matrix checks run against the real pinned Pyodide engine
-and cover browser isolation, interactive input, imports, loops, functions,
-recursion, classes, errors, and output limits. Four checks verify Admin C++17
-STL compilation, input, compiler errors, and timeouts. Live Admin and Guest
-browser tests also completed without console errors.
+Version 5.1 passes **21/21 permanent automated tests** and **17/17 execution-
+matrix checks**. Eight matrix checks exercise the real pinned Pyodide engine.
+Nine C++ checks use real Docker containers and cover C++17/STL, input, compiler
+errors, timeouts, non-root execution, read-only boundaries, disabled network,
+output limits, cleanup, and image identity. The interactive integration test
+also inspects a running container's actual Docker restrictions.
 
 ```cmd
 python test_app.py
@@ -244,11 +270,15 @@ orientation and **Desktop site** mode usually provide a better layout.
 ```text
 .
 ├── app.py
+├── docker_execution.py       # Fixed Docker command and C++ execution policy
 ├── requirements.txt
+├── setup-docker.cmd          # One-time Windows Docker image setup
 ├── test_app.py
 ├── test_browser_python.mjs
 ├── test_execution_matrix.py
 ├── data/                    # Local JSON workspace and collaboration state
+├── docker/
+│   └── cpp-runner/          # Pinned GCC image and non-root runner
 ├── docs/
 │   └── images/             # Release screenshots
 └── static/
@@ -261,7 +291,7 @@ orientation and **Desktop site** mode usually provide a better layout.
 
 Python, FastAPI, Uvicorn, WebSockets, HTML, CSS, JavaScript, CodeMirror 5,
 Pyodide 314.0.5, WebAssembly, Web Workers, Lucide icons, QRCode, Pillow, and a
-supported C++ compiler.
+Docker-isolated GCC 14.2 C++17 runner.
 
 ## Credits
 
