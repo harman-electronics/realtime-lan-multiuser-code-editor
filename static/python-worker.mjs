@@ -2,7 +2,7 @@ import {
   BROWSER_PYTHON_VERSION,
   createBrowserPythonRuntime,
   replayBrowserPython,
-} from './python-runtime.mjs?v=5.1-docker-cpp-1';
+} from './python-runtime.mjs?v=5.1-python-modes-1';
 
 let runtimePromise = null;
 let activeRun = null;

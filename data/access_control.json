@@ -1,4 +1,6 @@
 {
   "owner_grants": {},
-  "global_editors": []
+  "global_editors": [],
+  "python_execution_mode": "browser",
+  "guest_auto_approval": false
 }

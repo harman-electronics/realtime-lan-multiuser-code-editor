@@ -11,6 +11,10 @@ CPP_DOCKER_IMAGE = os.environ.get(
     "LIVE_EDITOR_CPP_DOCKER_IMAGE",
     "wifi-codeshare-cpp-runner:1.0",
 )
+PYTHON_DOCKER_IMAGE = os.environ.get(
+    "LIVE_EDITOR_PYTHON_DOCKER_IMAGE",
+    "wifi-codeshare-python-runner:1.0",
+)
 CPP_DOCKER_MEMORY = os.environ.get("LIVE_EDITOR_CPP_DOCKER_MEMORY", "512m")
 CPP_DOCKER_CPUS = os.environ.get("LIVE_EDITOR_CPP_DOCKER_CPUS", "1.0")
 CPP_DOCKER_PIDS = os.environ.get("LIVE_EDITOR_CPP_DOCKER_PIDS", "64")
@@ -19,7 +23,9 @@ CPP_DOCKER_WORKSPACE_SIZE = os.environ.get(
     "128m",
 )
 CPP_READY_MARKER = "__WIFI_CODESHARE_CPP_READY__"
+PYTHON_READY_MARKER = "__WIFI_CODESHARE_PYTHON_READY__"
 CPP_CONTAINER_LABEL = "wifi-codeshare.execution=cpp"
+PYTHON_CONTAINER_LABEL = "wifi-codeshare.execution=python"
 MAX_CAPTURE_OUTPUT_CHARS = 100_000
 
 
@@ -86,7 +92,7 @@ def _run_docker_check(arguments: List[str], timeout: float = 8.0) -> subprocess.
         ) from exc
 
 
-def ensure_cpp_docker_ready() -> str:
+def _ensure_docker_ready(image_name: str, runner_name: str) -> str:
     info = _run_docker_check(["info", "--format", "{{.OSType}}"])
     if info.returncode != 0:
         detail = (info.stderr or info.stdout).strip()
@@ -96,29 +102,42 @@ def ensure_cpp_docker_ready() -> str:
         )
     if info.stdout.strip().lower() != "linux":
         raise DockerExecutionError(
-            "The C++ runner requires Docker Desktop in Linux-container mode."
+            f"The {runner_name} runner requires Docker Desktop in Linux-container mode."
         )
 
-    image = _run_docker_check(["image", "inspect", CPP_DOCKER_IMAGE])
+    image = _run_docker_check(["image", "inspect", image_name])
     if image.returncode != 0:
         raise DockerExecutionError(
-            f"Docker image '{CPP_DOCKER_IMAGE}' is missing. Run setup-docker.cmd once."
+            f"Docker image '{image_name}' is missing. Run setup-docker.cmd once."
         )
     docker = resolve_docker_executable()
     if not docker:
-        raise DockerExecutionError("Docker became unavailable while preparing the C++ runner.")
+        raise DockerExecutionError(
+            f"Docker became unavailable while preparing the {runner_name} runner."
+        )
     return docker
 
 
-def create_container_name() -> str:
-    return f"wifi-codeshare-cpp-{uuid.uuid4().hex[:20]}"
+def ensure_cpp_docker_ready() -> str:
+    return _ensure_docker_ready(CPP_DOCKER_IMAGE, "C++")
 
 
-def build_cpp_docker_command(
+def ensure_python_docker_ready() -> str:
+    return _ensure_docker_ready(PYTHON_DOCKER_IMAGE, "Python")
+
+
+def create_container_name(language: str = "cpp") -> str:
+    safe_language = "python" if language == "python" else "cpp"
+    return f"wifi-codeshare-{safe_language}-{uuid.uuid4().hex[:20]}"
+
+
+def _build_docker_command(
     docker: str,
     source_directory: str,
     container_name: str,
-    execution_seconds: float = 60.0,
+    image_name: str,
+    container_label: str,
+    execution_seconds: float,
 ) -> List[str]:
     source_directory = os.path.abspath(source_directory)
     return [
@@ -130,7 +149,7 @@ def build_cpp_docker_command(
         "--name",
         container_name,
         "--label",
-        CPP_CONTAINER_LABEL,
+        container_label,
         "--init",
         "--restart",
         "no",
@@ -170,11 +189,43 @@ def build_cpp_docker_command(
         "/workspace",
         "--user",
         "10001:10001",
-        CPP_DOCKER_IMAGE,
+        image_name,
     ]
 
 
-def remove_cpp_container(container_name: Optional[str]) -> None:
+def build_cpp_docker_command(
+    docker: str,
+    source_directory: str,
+    container_name: str,
+    execution_seconds: float = 60.0,
+) -> List[str]:
+    return _build_docker_command(
+        docker,
+        source_directory,
+        container_name,
+        CPP_DOCKER_IMAGE,
+        CPP_CONTAINER_LABEL,
+        execution_seconds,
+    )
+
+
+def build_python_docker_command(
+    docker: str,
+    source_directory: str,
+    container_name: str,
+    execution_seconds: float = 60.0,
+) -> List[str]:
+    return _build_docker_command(
+        docker,
+        source_directory,
+        container_name,
+        PYTHON_DOCKER_IMAGE,
+        PYTHON_CONTAINER_LABEL,
+        execution_seconds,
+    )
+
+
+def remove_docker_container(container_name: Optional[str]) -> None:
     if not container_name:
         return
     docker = resolve_docker_executable()
@@ -190,6 +241,11 @@ def remove_cpp_container(container_name: Optional[str]) -> None:
         )
     except (OSError, subprocess.TimeoutExpired):
         pass
+
+
+def remove_cpp_container(container_name: Optional[str]) -> None:
+    """Backward-compatible alias used by the C++ REST execution path."""
+    remove_docker_container(container_name)
 
 
 def remove_ready_marker(stderr: str) -> Tuple[str, bool]:

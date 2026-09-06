@@ -25,6 +25,12 @@ docker build --pull --tag wifi-codeshare-cpp-runner:1.0 docker\cpp-runner
 if errorlevel 1 exit /b 1
 
 echo.
-echo Docker C++ runner is ready.
+echo Building the restricted WiFi CodeShare Python runner...
+docker build --pull --tag wifi-codeshare-python-runner:1.0 docker\python-runner
+if errorlevel 1 exit /b 1
+
+echo.
+echo Docker execution runners are ready.
 docker image inspect wifi-codeshare-cpp-runner:1.0 --format "Image: {{.RepoTags}}"
+docker image inspect wifi-codeshare-python-runner:1.0 --format "Image: {{.RepoTags}}"
 endlocal
