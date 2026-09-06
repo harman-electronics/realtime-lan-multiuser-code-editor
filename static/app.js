@@ -26,8 +26,6 @@ const state = {
   guestAutoApproval: false,
   pythonExecutionMode: 'browser',
   pythonModeMenuOpen: false,
-  pythonExecutionMode: 'browser',
-  executionModeMenuOpen: false,
   editableOwnerIds: new Set(),
   globalEditor: false,
   editor: null,
@@ -77,7 +75,6 @@ const elements = {
   btnChooseAdmin: $('btnChooseAdmin'),
   btnChooseGuest: $('btnChooseGuest'),
   guestRoleHelp: $('guestRoleHelp'),
-  guestRoleHelp: $('guestRoleHelp'),
   frmAdminLogin: $('frmAdminLogin'),
   frmGuestLogin: $('frmGuestLogin'),
   btnBackFromAdmin: $('btnBackFromAdmin'),
@@ -108,8 +105,6 @@ const elements = {
   wsStatusText: $('wsStatusText'),
   executionModeControl: $('executionModeControl'),
   executionModeTag: $('executionModeTag'),
-  executionModeText: $('executionModeText'),
-  executionModeMenu: $('executionModeMenu'),
   executionModeText: $('executionModeText'),
   executionModeMenu: $('executionModeMenu'),
   fileTabs: $('fileTabs'),
@@ -2521,6 +2516,7 @@ function closePythonModeMenu() {
 }
 
 function togglePythonModeMenu(event) {
+  event.preventDefault();
   event.stopPropagation();
   if (elements.executionModeTag.disabled || state.user?.role !== 'admin') return;
   state.pythonModeMenuOpen = !state.pythonModeMenuOpen;
@@ -2529,6 +2525,14 @@ function togglePythonModeMenu(event) {
     'aria-expanded',
     state.pythonModeMenuOpen ? 'true' : 'false',
   );
+}
+
+function handlePythonModeMenuClick(event) {
+  event.preventDefault();
+  event.stopPropagation();
+  const option = event.target.closest('[data-python-mode]');
+  if (!option || option.disabled || !elements.executionModeMenu.contains(option)) return;
+  setPythonExecutionMode(option.dataset.pythonMode);
 }
 
 async function setPythonExecutionMode(mode) {
@@ -3435,10 +3439,7 @@ function bindInterfaceEvents() {
   elements.btnFontInc.addEventListener('click', () => setFontSize(currentFontSize + 1));
   elements.btnFontDec.addEventListener('click', () => setFontSize(currentFontSize - 1));
   elements.executionModeTag.addEventListener('click', togglePythonModeMenu);
-  elements.executionModeMenu.addEventListener('click', (event) => event.stopPropagation());
-  document.querySelectorAll('[data-python-mode]').forEach((option) => {
-    option.addEventListener('click', () => setPythonExecutionMode(option.dataset.pythonMode));
-  });
+  elements.executionModeMenu.addEventListener('click', handlePythonModeMenuClick);
 
   elements.btnChooseAdmin.addEventListener('click', () => selectLoginRole('admin'));
   elements.btnChooseGuest.addEventListener('click', () => selectLoginRole('guest'));

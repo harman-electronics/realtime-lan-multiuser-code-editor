@@ -20,6 +20,8 @@ Guests to join without waiting for approval on a trusted LAN.
 - Changed the Python execution status pill into an Admin-only menu with
   **Browser Python** and **Docker Python** choices. The saved classroom mode is
   broadcast to every connected user; Browser Python is the default.
+- Fixed the Python mode menu in Chrome by routing clicks through the menu,
+  keeping the menu above the editor, and preventing stale frontend caching.
 - Added **Admin Settings → Guest entry**. It is off by default. When enabled,
   existing waiting requests are accepted and new Guests with an available name
   and colour join immediately without creating a notification queue item.

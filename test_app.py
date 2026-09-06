@@ -180,6 +180,7 @@ class LiveEditorTestCase(unittest.TestCase):
             json={"role": "guest", "password": ""},
         )
         self.assertEqual(guest_login.status_code, 422)
+
         self.assertIn("request access", guest_login.json()["detail"])
 
         request = self.request_guest("Bob")
@@ -210,6 +211,15 @@ class LiveEditorTestCase(unittest.TestCase):
         )
         self.assertEqual(current.status_code, 200)
         self.assertEqual(current.json()["user"], admitted["user"])
+
+    def test_root_prevents_stale_frontend_cache(self):
+        response = self.client.get("/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.headers.get("cache-control"),
+            "no-cache, no-store, must-revalidate",
+        )
+        self.assertIn("5.1-python-modes-2", response.text)
 
     def test_guest_request_rejection_and_secret_validation(self):
         request = self.request_guest("Rejected Guest")
@@ -286,8 +296,11 @@ class LiveEditorTestCase(unittest.TestCase):
         self.assertIn('data-python-mode="docker"', html)
         self.assertIn('id="chkGuestAutoApproval"', html)
         self.assertIn("setPythonExecutionMode", javascript)
+        self.assertIn("handlePythonModeMenuClick", javascript)
+        self.assertIn("event.target.closest('[data-python-mode]')", javascript)
         self.assertIn("applyClassroomSettings", javascript)
         self.assertIn(".execution-mode-menu", stylesheet)
+        self.assertIn(".execution-mode-option > *", stylesheet)
         self.assertIn(".classroom-setting-row", stylesheet)
 
     def test_auto_join_is_off_by_default_and_can_admit_guests_immediately(self):
@@ -458,7 +471,7 @@ class LiveEditorTestCase(unittest.TestCase):
         self.assertIn("Next request opens after a decision", html)
         self.assertIn(".join-request-popover-row.is-active", stylesheet)
         self.assertIn(".join-request-popover-row.is-queued", stylesheet)
-        self.assertIn("5.1-python-modes-1", html)
+        self.assertIn("5.1-python-modes-2", html)
 
     def test_manual_student_creation_is_removed_and_admin_can_remove_guest(self):
         admin_token = self.login_admin()
@@ -1276,7 +1289,7 @@ class LiveEditorTestCase(unittest.TestCase):
         self.assertIn("margin-left: 3ch;", stylesheet)
         self.assertIn(".remote-cursor > .line-typing-badge", stylesheet)
         self.assertIn("left: 3ch;", stylesheet)
-        self.assertIn("5.1-python-modes-1", html)
+        self.assertIn("5.1-python-modes-2", html)
 
 
 if __name__ == "__main__":

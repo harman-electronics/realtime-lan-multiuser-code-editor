@@ -296,6 +296,9 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 0 16px;
+  position: relative;
+  z-index: 40;
+  overflow: visible;
 }
 
 .toolbar-left {
@@ -335,6 +338,7 @@ body {
 .execution-mode-control {
   position: relative;
   display: inline-flex;
+  z-index: 1;
 }
 
 .execution-mode-tag {
@@ -405,6 +409,8 @@ body {
   box-shadow: 0 18px 50px rgba(0, 0, 0, 0.38);
   backdrop-filter: blur(22px);
   -webkit-backdrop-filter: blur(22px);
+  pointer-events: auto;
+  isolation: isolate;
 }
 
 .execution-mode-menu[hidden] {
@@ -425,6 +431,11 @@ body {
   background: transparent;
   text-align: left;
   cursor: pointer;
+  pointer-events: auto;
+}
+
+.execution-mode-option > * {
+  pointer-events: none;
 }
 
 .execution-mode-option:hover {
