@@ -3,6 +3,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -12,6 +13,14 @@ import app as app_module
 def docker_cpp_runner_available():
     try:
         app_module.ensure_cpp_docker_ready()
+        return True
+    except app_module.DockerExecutionError:
+        return False
+
+
+def docker_python_runner_available():
+    try:
+        app_module.ensure_python_docker_ready()
         return True
     except app_module.DockerExecutionError:
         return False
@@ -235,6 +244,118 @@ class LiveEditorTestCase(unittest.TestCase):
         )
         self.assertEqual(status.json()["status"], "rejected")
 
+    def test_classroom_settings_default_and_admin_only_updates(self):
+        info = self.client.get("/api/info")
+        self.assertEqual(info.status_code, 200, info.text)
+        self.assertEqual(info.json()["python_execution_mode"], "browser")
+        self.assertFalse(info.json()["guest_auto_approval"])
+
+        admin_token = self.login_admin()
+        guest = self.approve_guest("Settings Guest", admin_token)
+        forbidden = self.client.put(
+            "/api/settings/guest-auto-approval",
+            headers=self.auth_header(guest["token"]),
+            json={"enabled": True},
+        )
+        self.assertEqual(forbidden.status_code, 403)
+
+        with patch.object(app_module, "ensure_python_docker_ready", return_value="docker"):
+            updated = self.client.put(
+                "/api/settings/python-execution-mode",
+                headers=self.auth_header(admin_token),
+                json={"mode": "docker"},
+            )
+        self.assertEqual(updated.status_code, 200, updated.text)
+        self.assertEqual(updated.json()["python_execution_mode"], "docker")
+        saved = json.loads(Path(app_module.ACCESS_FILE).read_text(encoding="utf-8"))
+        self.assertEqual(saved["python_execution_mode"], "docker")
+
+        invalid = self.client.put(
+            "/api/settings/python-execution-mode",
+            headers=self.auth_header(admin_token),
+            json={"mode": "host"},
+        )
+        self.assertEqual(invalid.status_code, 422)
+
+        static_directory = Path(app_module.STATIC_DIR)
+        html = (static_directory / "index.html").read_text(encoding="utf-8")
+        javascript = (static_directory / "app.js").read_text(encoding="utf-8")
+        stylesheet = (static_directory / "style.css").read_text(encoding="utf-8")
+        self.assertIn('id="executionModeMenu"', html)
+        self.assertIn('data-python-mode="browser"', html)
+        self.assertIn('data-python-mode="docker"', html)
+        self.assertIn('id="chkGuestAutoApproval"', html)
+        self.assertIn("setPythonExecutionMode", javascript)
+        self.assertIn("applyClassroomSettings", javascript)
+        self.assertIn(".execution-mode-menu", stylesheet)
+        self.assertIn(".classroom-setting-row", stylesheet)
+
+    def test_auto_join_is_off_by_default_and_can_admit_guests_immediately(self):
+        admin_token = self.login_admin()
+        waiting = self.request_guest("Waiting Guest")
+        self.assertEqual(waiting["status"], "pending")
+
+        enabled = self.client.put(
+            "/api/settings/guest-auto-approval",
+            headers=self.auth_header(admin_token),
+            json={"enabled": True},
+        )
+        self.assertEqual(enabled.status_code, 200, enabled.text)
+        self.assertTrue(enabled.json()["guest_auto_approval"])
+        self.assertEqual(enabled.json()["approved_names"], ["Waiting Guest"])
+
+        waiting_status = self.client.get(
+            f"/api/guest-requests/{waiting['request_id']}/status",
+            params={"request_token": waiting["request_token"]},
+        )
+        self.assertEqual(waiting_status.status_code, 200, waiting_status.text)
+        self.assertEqual(waiting_status.json()["status"], "approved")
+        self.assertIn("token", waiting_status.json())
+
+        immediate = self.request_guest("Immediate Guest")
+        self.assertEqual(immediate["status"], "approved")
+        self.assertEqual(immediate["user"]["username"], "Immediate Guest")
+        self.assertIn("token", immediate)
+        queue = self.client.get(
+            "/api/join-requests",
+            headers=self.auth_header(admin_token),
+        )
+        self.assertEqual(queue.json()["pending_count"], 0)
+
+        duplicate = self.client.post(
+            "/api/guest-requests",
+            json={"full_name": "immediate guest"},
+        )
+        self.assertEqual(duplicate.status_code, 200, duplicate.text)
+        self.assertEqual(duplicate.json()["user"]["account_id"], immediate["user"]["account_id"])
+
+        disabled = self.client.put(
+            "/api/settings/guest-auto-approval",
+            headers=self.auth_header(admin_token),
+            json={"enabled": False},
+        )
+        self.assertEqual(disabled.status_code, 200, disabled.text)
+        self.assertFalse(disabled.json()["guest_auto_approval"])
+        pending_again = self.request_guest("Manual Again")
+        self.assertEqual(pending_again["status"], "pending")
+
+    def test_classroom_settings_are_broadcast_to_connected_users(self):
+        admin_token = self.login_admin()
+        with self.client.websocket_connect("/ws/settings_broadcast") as websocket:
+            self.join_admin_websocket(websocket, admin_token)
+            response = self.client.put(
+                "/api/settings/guest-auto-approval",
+                headers=self.auth_header(admin_token),
+                json={"enabled": True},
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+            event, _ = self.receive_websocket_type(
+                websocket,
+                "classroom_settings_updated",
+            )
+            self.assertTrue(event["guest_auto_approval"])
+            self.assertEqual(event["python_execution_mode"], "browser")
+
     def test_admin_receives_live_guest_join_notification(self):
         admin_token = self.login_admin()
         with self.client.websocket_connect("/ws/admin_join_requests") as websocket:
@@ -337,7 +458,7 @@ class LiveEditorTestCase(unittest.TestCase):
         self.assertIn("Next request opens after a decision", html)
         self.assertIn(".join-request-popover-row.is-active", stylesheet)
         self.assertIn(".join-request-popover-row.is-queued", stylesheet)
-        self.assertIn("5.1-docker-cpp-1", html)
+        self.assertIn("5.1-python-modes-1", html)
 
     def test_manual_student_creation_is_removed_and_admin_can_remove_guest(self):
         admin_token = self.login_admin()
@@ -688,7 +809,7 @@ class LiveEditorTestCase(unittest.TestCase):
         self.assertTrue((static_directory / "vendor" / "pyodide" / "python_stdlib.zip").is_file())
         self.assertIn("BROWSER_PYTHON_VERSION = '314.0.5'", runtime)
         self.assertIn("replayBrowserPython", runtime)
-        self.assertIn("new Worker('/static/python-worker.mjs?v=5.1-docker-cpp-1'", javascript)
+        self.assertIn("new Worker('/static/python-worker.mjs?v=5.1-python-modes-1'", javascript)
         self.assertIn("Runs in this browser", html)
         self.assertNotIn("cdn.jsdelivr.net", runtime)
         self.assertIn("runtime_loading", worker)
@@ -734,13 +855,51 @@ class LiveEditorTestCase(unittest.TestCase):
         self.assertIn("__WIFI_CODESHARE_CPP_READY__", runner)
         self.assertIn("docker build --pull", setup_script)
 
+    def test_python_docker_image_and_command_use_the_same_sandbox_boundaries(self):
+        with tempfile.TemporaryDirectory() as source_directory:
+            command = app_module.build_python_docker_command(
+                "docker",
+                source_directory,
+                "wifi-codeshare-python-test",
+                execution_seconds=9,
+            )
+        joined = " ".join(command)
+        self.assertIn("--network none", joined)
+        self.assertIn("--ipc none", joined)
+        self.assertIn("--read-only", command)
+        self.assertIn("--cap-drop ALL", joined)
+        self.assertIn("no-new-privileges:true", command)
+        self.assertIn("--memory 512m", joined)
+        self.assertIn("--pids-limit 64", joined)
+        self.assertIn("target=/source,readonly", joined)
+        self.assertIn("LIVE_EDITOR_EXECUTION_TIMEOUT=9", command)
+        self.assertIn("--user 10001:10001", joined)
+        self.assertEqual(command[-1], app_module.PYTHON_DOCKER_IMAGE)
+
+        root = Path(__file__).resolve().parent
+        dockerfile = (root / "docker" / "python-runner" / "Dockerfile").read_text(
+            encoding="utf-8"
+        )
+        runner = (root / "docker" / "python-runner" / "runner.sh").read_text(
+            encoding="utf-8"
+        )
+        setup_script = (root / "setup-docker.cmd").read_text(encoding="utf-8")
+        self.assertIn("python:3.14.0-slim-bookworm@sha256:", dockerfile)
+        self.assertIn("numpy==2.5.2", dockerfile)
+        self.assertIn("pandas==3.0.5", dockerfile)
+        self.assertIn("matplotlib==3.11.1", dockerfile)
+        self.assertIn("sympy==1.14.0", dockerfile)
+        self.assertIn("USER 10001:10001", dockerfile)
+        self.assertIn("__WIFI_CODESHARE_PYTHON_READY__", runner)
+        self.assertIn("wifi-codeshare-python-runner:1.0", setup_script)
+
     def test_websocket_docker_execution_rejects_python_and_guest_cpp(self):
         self.assertEqual(app_module.MAX_INTERACTIVE_EXECUTION_SECONDS, 60.0)
         self.assertEqual(app_module.MAX_INTERACTIVE_OUTPUT_CHARS, 100_000)
         self.assertEqual(app_module.MAX_INTERACTIVE_EXECUTIONS, 20)
         self.assertEqual(app_module.MAX_INTERACTIVE_INPUT_LINE, 4_096)
         self.assertEqual(app_module.MAX_INTERACTIVE_INPUT_TOTAL, 20_000)
-        self.assertEqual(app_module.MAX_CONCURRENT_CPP_COMPILATIONS, 4)
+        self.assertEqual(app_module.MAX_CONCURRENT_DOCKER_EXECUTIONS, 4)
 
         token = self.login_admin()
         with self.client.websocket_connect("/ws/admin_python_terminal") as websocket:
@@ -797,6 +956,82 @@ class LiveEditorTestCase(unittest.TestCase):
         self.assertIn(".execution-mode-tag", stylesheet)
         self.assertIn(".terminal-resize-handle", stylesheet)
         self.assertIn("color: var(--warning-color);", stylesheet)
+
+    @unittest.skipUnless(
+        docker_python_runner_available(),
+        "The restricted Docker Python image is not ready",
+    )
+    def test_guest_docker_python_accepts_input_and_approved_libraries(self):
+        admin_token = self.login_admin()
+        guest = self.approve_guest("Docker Python Guest", admin_token)
+        self.manager.access_control["python_execution_mode"] = "docker"
+
+        with self.client.websocket_connect("/ws/guest_python_docker") as websocket:
+            self.join_admin_websocket(websocket, guest["token"])
+            websocket.send_json(
+                {
+                    "type": "terminal_run",
+                    "file_id": "file_main",
+                    "code": (
+                        "import numpy as np\n"
+                        "import pandas as pd\n"
+                        "import matplotlib\n"
+                        "import sympy as sp\n"
+                        "first = int(input('First: '))\n"
+                        "second = int(input('Second: '))\n"
+                        "print(f'Total: {first + second}')\n"
+                        "print(np.array([2, 3]).sum())\n"
+                        "print(pd.Series([4, 5]).sum())\n"
+                        "print(matplotlib.__version__)\n"
+                        "print(sp.factor(6 * 7))\n"
+                    ),
+                }
+            )
+            started, _ = self.receive_websocket_type(websocket, "terminal_started")
+            self.assertEqual(started["language"], "python")
+            self.assertEqual(started["image"], app_module.PYTHON_DOCKER_IMAGE)
+            self.receive_websocket_type(websocket, "terminal_ready")
+
+            execution = self.manager.execution_sessions[guest["user"]["account_id"]]
+            inspect_process = subprocess.run(
+                [
+                    execution["docker"],
+                    "container",
+                    "inspect",
+                    execution["container_name"],
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+            self.assertEqual(inspect_process.returncode, 0, inspect_process.stderr)
+            container = json.loads(inspect_process.stdout)[0]
+            host_config = container["HostConfig"]
+            self.assertEqual(container["Config"]["User"], "10001:10001")
+            self.assertEqual(host_config["NetworkMode"], "none")
+            self.assertTrue(host_config["ReadonlyRootfs"])
+            self.assertIn("ALL", host_config["CapDrop"])
+            self.assertIn("no-new-privileges:true", host_config["SecurityOpt"])
+
+            websocket.send_json({"type": "terminal_input", "text": "10"})
+            self.receive_websocket_type(websocket, "terminal_input_echo")
+            websocket.send_json({"type": "terminal_input", "text": "5"})
+            finished, messages = self.receive_websocket_type(
+                websocket,
+                "terminal_finished",
+            )
+            output = "".join(
+                message.get("text", "")
+                for message in messages
+                if message.get("type") == "terminal_output"
+            )
+            self.assertIn("Total: 15", output)
+            self.assertIn("5\n", output)
+            self.assertIn("9\n", output)
+            self.assertIn("3.11.1", output)
+            self.assertIn("42", output)
+            self.assertEqual(finished["status"], "completed")
 
     @unittest.skipUnless(
         docker_cpp_runner_available(),
@@ -1041,7 +1276,7 @@ class LiveEditorTestCase(unittest.TestCase):
         self.assertIn("margin-left: 3ch;", stylesheet)
         self.assertIn(".remote-cursor > .line-typing-badge", stylesheet)
         self.assertIn("left: 3ch;", stylesheet)
-        self.assertIn("5.1-docker-cpp-1", html)
+        self.assertIn("5.1-python-modes-1", html)
 
 
 if __name__ == "__main__":
