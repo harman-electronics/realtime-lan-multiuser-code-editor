@@ -24,6 +24,21 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from docker_execution import (
+    CPP_DOCKER_IMAGE,
+    CPP_READY_MARKER,
+    PYTHON_DOCKER_IMAGE,
+    PYTHON_READY_MARKER,
+    DockerExecutionError,
+    build_cpp_docker_command,
+    build_python_docker_command,
+    create_container_name,
+    ensure_cpp_docker_ready,
+    ensure_python_docker_ready,
+    remove_docker_container,
+    run_cpp_in_docker,
+)
+
 
 @asynccontextmanager
 async def app_lifespan(_app: FastAPI):
@@ -64,8 +79,8 @@ MAX_INTERACTIVE_OUTPUT_CHARS = 100_000
 MAX_INTERACTIVE_EXECUTIONS = 20
 MAX_INTERACTIVE_INPUT_LINE = 4_096
 MAX_INTERACTIVE_INPUT_TOTAL = 20_000
-MAX_CONCURRENT_CPP_COMPILATIONS = 4
-CPP_COMPILE_TIMEOUT_SECONDS = 15.0
+MAX_CONCURRENT_DOCKER_EXECUTIONS = 4
+MAX_CONCURRENT_CPP_COMPILATIONS = MAX_CONCURRENT_DOCKER_EXECUTIONS
 
 COLOR_PALETTE = [
     "#FF5722", "#E91E63", "#9C27B0", "#673AB7",
@@ -73,12 +88,6 @@ COLOR_PALETTE = [
     "#4CAF50", "#8BC34A", "#FF9800", "#795548",
 ]
 
-
-def resolve_cpp_compiler() -> Optional[str]:
-    configured_compiler = os.environ.get("LIVE_EDITOR_CPP_COMPILER")
-    if configured_compiler and os.path.isfile(configured_compiler):
-        return configured_compiler
-    return shutil.which("g++") or shutil.which("clang++")
 
 DEFAULT_STUDENTS = [
     {
@@ -242,6 +251,10 @@ class ToggleRequest(BaseModel):
     enabled: bool
 
 
+class PythonExecutionModeRequest(BaseModel):
+    mode: str
+
+
 class TabLimitRequest(BaseModel):
     tab_limit: int
 
@@ -269,8 +282,8 @@ class ConnectionManager:
         self.state_lock = asyncio.Lock()
         self.execution_lock = asyncio.Lock()
         self.execution_sessions: Dict[str, Dict[str, Any]] = {}
-        self.cpp_compile_semaphore = asyncio.Semaphore(
-            MAX_CONCURRENT_CPP_COMPILATIONS
+        self.docker_execution_semaphore = asyncio.Semaphore(
+            MAX_CONCURRENT_DOCKER_EXECUTIONS
         )
         self.guests: List[Dict[str, Any]] = self._load_guests()
         self.join_requests: List[Dict[str, Any]] = load_json(
@@ -281,7 +294,21 @@ class ConnectionManager:
         self.line_authors = self._load_line_authors()
         self.access_control = load_json(
             ACCESS_FILE,
-            {"owner_grants": {}, "global_editors": []},
+            {
+                "owner_grants": {},
+                "global_editors": [],
+                "python_execution_mode": "browser",
+                "guest_auto_approval": False,
+            },
+        )
+        if not isinstance(self.access_control, dict):
+            self.access_control = {}
+        self.access_control.setdefault("owner_grants", {})
+        self.access_control.setdefault("global_editors", [])
+        if self.access_control.get("python_execution_mode") not in {"browser", "docker"}:
+            self.access_control["python_execution_mode"] = "browser"
+        self.access_control["guest_auto_approval"] = bool(
+            self.access_control.get("guest_auto_approval", False)
         )
         self.chat_history: List[Dict[str, Any]] = load_json(CHAT_FILE, [])
 
@@ -377,6 +404,17 @@ class ConnectionManager:
 
     def save_access(self) -> None:
         save_json(ACCESS_FILE, self.access_control)
+
+    def public_classroom_settings(self) -> Dict[str, Any]:
+        return {
+            "python_execution_mode": self.access_control.get(
+                "python_execution_mode",
+                "browser",
+            ),
+            "guest_auto_approval": bool(
+                self.access_control.get("guest_auto_approval", False)
+            ),
+        }
 
     def get_guest(self, account_id: str) -> Optional[Dict[str, Any]]:
         return next(
@@ -514,7 +552,11 @@ class ConnectionManager:
             "message": "Name is available.",
         }
 
-    def create_guest_join_request(self, full_name: str) -> Dict[str, Any]:
+    def create_guest_join_request(
+        self,
+        full_name: str,
+        auto_approve: bool = False,
+    ) -> Dict[str, Any]:
         availability = self.guest_name_availability(full_name)
         name = availability["full_name"]
         if not availability["available"]:
@@ -526,7 +568,7 @@ class ConnectionManager:
             request.get("status") == "pending"
             for request in self.join_requests
         )
-        if pending_count >= 50:
+        if not auto_approve and pending_count >= 50:
             raise HTTPException(
                 status_code=429,
                 detail="Too many join requests are waiting. Ask the Admin to review them.",
@@ -544,6 +586,11 @@ class ConnectionManager:
         self.join_requests.append(request)
         self.join_requests = self.join_requests[-200:]
         self.save_join_requests()
+        if auto_approve:
+            return self.approve_guest_join_request(
+                request["id"],
+                enforce_order=False,
+            )
         return request
 
     def get_join_request(self, request_id: str) -> Optional[Dict[str, Any]]:
@@ -556,13 +603,18 @@ class ConnectionManager:
             None,
         )
 
-    def approve_guest_join_request(self, request_id: str) -> Dict[str, Any]:
+    def approve_guest_join_request(
+        self,
+        request_id: str,
+        enforce_order: bool = True,
+    ) -> Dict[str, Any]:
         request = self.get_join_request(request_id)
         if not request:
             raise HTTPException(status_code=404, detail="Join request not found.")
         if request.get("status") != "pending":
             raise HTTPException(status_code=409, detail="This join request was already resolved.")
-        self.require_next_join_request(request_id)
+        if enforce_order:
+            self.require_next_join_request(request_id)
         guest = self.get_guest_by_name(request["full_name"])
         if guest and self.is_account_connected(guest["account_id"]):
             raise HTTPException(
@@ -872,7 +924,16 @@ class ConnectionManager:
             options["start_new_session"] = True
         return options
 
-    async def _terminate_execution_process(self, process: Any) -> None:
+    async def _terminate_execution_process(
+        self,
+        process: Any,
+        execution: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        if execution and execution.get("container_name"):
+            await asyncio.to_thread(
+                remove_docker_container,
+                execution.get("container_name"),
+            )
         if not process or process.returncode is not None:
             return
         if os.name == "nt":
@@ -920,7 +981,10 @@ class ConnectionManager:
         remaining = MAX_INTERACTIVE_OUTPUT_CHARS - execution["output_chars"]
         if remaining <= 0:
             execution["output_limited"] = True
-            await self._terminate_execution_process(execution.get("process"))
+            await self._terminate_execution_process(
+                execution.get("process"),
+                execution,
+            )
             return
         visible = text[:remaining]
         execution["output_chars"] += len(visible)
@@ -945,7 +1009,10 @@ class ConnectionManager:
                     ),
                 },
             )
-            await self._terminate_execution_process(execution.get("process"))
+            await self._terminate_execution_process(
+                execution.get("process"),
+                execution,
+            )
 
     async def _read_execution_stream(
         self,
@@ -958,12 +1025,46 @@ class ConnectionManager:
             chunk = await reader.read(1024)
             if not chunk:
                 break
-            await self._emit_execution_output(
-                execution,
-                decoder.decode(chunk),
-                stream,
-            )
+            decoded = decoder.decode(chunk)
+            if stream == "stderr" and not execution.get("program_started"):
+                execution["stderr_marker_buffer"] += decoded
+                while "\n" in execution["stderr_marker_buffer"]:
+                    line, remainder = execution["stderr_marker_buffer"].split("\n", 1)
+                    execution["stderr_marker_buffer"] = remainder
+                    if line.rstrip("\r") == execution["ready_marker"]:
+                        execution["program_started"] = True
+                        execution["stage"] = "run"
+                        execution["accepts_input"] = True
+                        await self._send_execution_event(
+                            execution,
+                            {
+                                "type": "terminal_ready",
+                                "message": (
+                                    f"{execution['language'].title()} program started inside "
+                                    "an isolated Docker container. Terminal input is ready."
+                                ),
+                            },
+                        )
+                        if execution["stderr_marker_buffer"]:
+                            await self._emit_execution_output(
+                                execution,
+                                execution["stderr_marker_buffer"],
+                                stream,
+                            )
+                            execution["stderr_marker_buffer"] = ""
+                        break
+                    await self._emit_execution_output(
+                        execution,
+                        f"{line}\n",
+                        stream,
+                    )
+            else:
+                await self._emit_execution_output(execution, decoded, stream)
         trailing = decoder.decode(b"", final=True)
+        if stream == "stderr" and not execution.get("program_started"):
+            execution["stderr_marker_buffer"] += trailing
+            trailing = execution["stderr_marker_buffer"]
+            execution["stderr_marker_buffer"] = ""
         if trailing:
             await self._emit_execution_output(execution, trailing, stream)
 
@@ -984,14 +1085,6 @@ class ConnectionManager:
             **self._subprocess_options(allow_input=True, cwd=cwd, env=env),
         )
         execution["process"] = process
-        execution["accepts_input"] = True
-        await self._send_execution_event(
-            execution,
-            {
-                "type": "terminal_ready",
-                "message": "Program started. Terminal input is ready.",
-            },
-        )
         readers = [
             asyncio.create_task(
                 self._read_execution_stream(execution, process.stdout, "stdout")
@@ -1004,7 +1097,7 @@ class ConnectionManager:
             remaining = self._remaining_execution_time(execution)
             if remaining <= 0:
                 execution["timed_out"] = True
-                await self._terminate_execution_process(process)
+                await self._terminate_execution_process(process, execution)
                 return process.returncode if process.returncode is not None else -1
             await asyncio.wait_for(
                 process.wait(),
@@ -1012,98 +1105,12 @@ class ConnectionManager:
             )
         except asyncio.TimeoutError:
             execution["timed_out"] = True
-            await self._terminate_execution_process(process)
+            await self._terminate_execution_process(process, execution)
         finally:
             execution["accepts_input"] = False
             await asyncio.gather(*readers, return_exceptions=True)
             execution["process"] = None
         return process.returncode if process.returncode is not None else -1
-
-    async def _compile_interactive_cpp(
-        self,
-        execution: Dict[str, Any],
-        source_path: str,
-        output_path: str,
-    ) -> Optional[int]:
-        compiler = resolve_cpp_compiler()
-        if not compiler:
-            await self._emit_execution_output(
-                execution,
-                (
-                    "C++ compiler not found. Install g++ or clang++, add it to "
-                    "PATH, or set LIVE_EDITOR_CPP_COMPILER.\n"
-                ),
-                "stderr",
-            )
-            return -1
-
-        await self._send_execution_event(
-            execution,
-            {"type": "terminal_status", "message": "Compiling C++..."},
-        )
-        execution["stage"] = "compile"
-        remaining = self._remaining_execution_time(execution)
-        if remaining <= 0:
-            execution["timed_out"] = True
-            return -1
-        try:
-            await asyncio.wait_for(
-                self.cpp_compile_semaphore.acquire(),
-                timeout=remaining,
-            )
-        except asyncio.TimeoutError:
-            execution["timed_out"] = True
-            return -1
-        try:
-            if execution.get("stop_reason"):
-                return None
-            remaining = self._remaining_execution_time(execution)
-            if remaining <= 0:
-                execution["timed_out"] = True
-                return -1
-            process = await asyncio.create_subprocess_exec(
-                compiler,
-                source_path,
-                "-std=c++17",
-                "-O0",
-                "-o",
-                output_path,
-                **self._subprocess_options(
-                    allow_input=False,
-                    cwd=execution["temp_dir"],
-                ),
-            )
-            execution["process"] = process
-            compile_timeout = min(CPP_COMPILE_TIMEOUT_SECONDS, remaining)
-            try:
-                stdout, stderr = await asyncio.wait_for(
-                    process.communicate(),
-                    timeout=compile_timeout,
-                )
-            except asyncio.TimeoutError:
-                execution["timed_out"] = True
-                await self._terminate_execution_process(process)
-                await self._emit_execution_output(
-                    execution,
-                    f"C++ compilation timed out after {compile_timeout:g} seconds.\n",
-                    "stderr",
-                )
-                return -1
-            finally:
-                execution["process"] = None
-            await self._emit_execution_output(
-                execution,
-                stdout.decode("utf-8", errors="replace"),
-                "stdout",
-            )
-            await self._emit_execution_output(
-                execution,
-                stderr.decode("utf-8", errors="replace"),
-                "stderr",
-            )
-            return process.returncode
-        finally:
-            self.cpp_compile_semaphore.release()
 
     async def start_interactive_execution(
         self,
@@ -1113,21 +1120,38 @@ class ConnectionManager:
         code: str,
         language: str,
     ) -> str:
-        if language != "cpp":
+        if language not in {"cpp", "python"}:
             raise HTTPException(
                 status_code=422,
-                detail="Python runs locally in the browser and cannot be started on the host.",
+                detail="Choose a Python or C++ file.",
             )
-        if user.get("role") != "admin":
+        if language == "cpp" and user.get("role") != "admin":
             raise HTTPException(
                 status_code=403,
-                detail="Only the Admin can execute C++ on the host computer.",
+                detail="Only the Admin can execute C++ in the Docker sandbox.",
+            )
+        if (
+            language == "python"
+            and self.access_control.get("python_execution_mode", "browser") != "docker"
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="Python is currently set to run inside each participant's browser.",
             )
         if len(code) > MAX_CODE_SIZE:
             raise HTTPException(status_code=413, detail="Code is too large.")
         account_id = str(user.get("account_id", ""))
         if not account_id:
             raise HTTPException(status_code=401, detail="Please log in first.")
+        docker_ready = (
+            ensure_python_docker_ready if language == "python" else ensure_cpp_docker_ready
+        )
+        docker_image = PYTHON_DOCKER_IMAGE if language == "python" else CPP_DOCKER_IMAGE
+        ready_marker = PYTHON_READY_MARKER if language == "python" else CPP_READY_MARKER
+        try:
+            docker = await asyncio.to_thread(docker_ready)
+        except DockerExecutionError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         async with self.execution_lock:
             if account_id in self.execution_sessions:
                 raise HTTPException(
@@ -1147,14 +1171,20 @@ class ConnectionManager:
                 "account_id": account_id,
                 "connection_id": connection_id,
                 "file_id": file_id,
-                "language": "cpp",
+                "language": language,
                 "started": time.monotonic(),
                 "deadline": time.monotonic() + MAX_INTERACTIVE_EXECUTION_SECONDS,
+                "docker": docker,
+                "docker_image": docker_image,
+                "container_name": create_container_name(language),
+                "ready_marker": ready_marker,
                 "process": None,
                 "task": None,
                 "temp_dir": tempfile.mkdtemp(prefix="live_editor_run_"),
                 "stage": "starting",
                 "accepts_input": False,
+                "program_started": False,
+                "stderr_marker_buffer": "",
                 "input_chars": 0,
                 "output_chars": 0,
                 "timed_out": False,
@@ -1175,6 +1205,8 @@ class ConnectionManager:
                     "input_line_chars": MAX_INTERACTIVE_INPUT_LINE,
                     "input_total_chars": MAX_INTERACTIVE_INPUT_TOTAL,
                 },
+                "isolation": "docker",
+                "image": docker_image,
             },
         )
         execution["task"] = asyncio.create_task(
@@ -1190,54 +1222,65 @@ class ConnectionManager:
         returncode = -1
         status = "failed"
         message = "Program failed."
+        semaphore_acquired = False
         try:
-            source_path = os.path.join(execution["temp_dir"], "main.cpp")
-            output_path = os.path.join(
-                execution["temp_dir"],
-                "program.exe" if os.name == "nt" else "program",
-            )
-            with open(source_path, "w", encoding="utf-8") as source_file:
+            language = execution["language"]
+            source_name = "main.py" if language == "python" else "main.cpp"
+            source_path = os.path.join(execution["temp_dir"], source_name)
+            with open(source_path, "w", encoding="utf-8", newline="\n") as source_file:
                 source_file.write(code)
-            compile_returncode = await self._compile_interactive_cpp(
+
+            await self._send_execution_event(
                 execution,
-                source_path,
-                output_path,
+                {
+                    "type": "terminal_status",
+                    "message": (
+                        f"Starting restricted Docker {language.title()} runner..."
+                    ),
+                },
             )
-            if compile_returncode is None or execution.get("stop_reason"):
+            execution["stage"] = "run" if language == "python" else "compile"
+            remaining = self._remaining_execution_time(execution)
+            if remaining <= 0:
+                execution["timed_out"] = True
+                return
+            try:
+                await asyncio.wait_for(
+                    self.docker_execution_semaphore.acquire(),
+                    timeout=remaining,
+                )
+                semaphore_acquired = True
+            except asyncio.TimeoutError:
+                execution["timed_out"] = True
+                return
+
+            if execution.get("stop_reason"):
                 status = "stopped"
                 message = execution.get("stop_reason") or "Program stopped."
                 return
-            if compile_returncode != 0:
-                returncode = compile_returncode
-                if execution.get("timed_out"):
-                    status = "timed_out"
-                    message = (
-                        f"Program stopped after {MAX_INTERACTIVE_EXECUTION_SECONDS:g} seconds."
-                    )
-                elif execution.get("output_limited"):
-                    status = "output_limited"
-                    message = (
-                        f"Program stopped after {MAX_INTERACTIVE_OUTPUT_CHARS:,} "
-                        "output characters."
-                    )
-                else:
-                    message = "C++ compilation failed."
-                return
-            await self._send_execution_event(
-                execution,
-                {"type": "terminal_status", "message": "Running C++..."},
+
+            command_builder = (
+                build_python_docker_command
+                if language == "python"
+                else build_cpp_docker_command
             )
-            execution["stage"] = "run"
+            command = command_builder(
+                execution["docker"],
+                execution["temp_dir"],
+                execution["container_name"],
+                execution_seconds=MAX_INTERACTIVE_EXECUTION_SECONDS,
+            )
             returncode = await self._run_interactive_process(
                 execution,
-                [output_path],
-                cwd=execution["temp_dir"],
+                command,
+                cwd=BASE_DIR,
             )
 
             if execution.get("stop_reason"):
                 status = "stopped"
                 message = execution["stop_reason"]
-            elif execution.get("timed_out"):
+            elif execution.get("timed_out") or returncode == 124:
+                execution["timed_out"] = True
                 status = "timed_out"
                 message = (
                     f"Program stopped after {MAX_INTERACTIVE_EXECUTION_SECONDS:g} seconds."
@@ -1250,6 +1293,12 @@ class ConnectionManager:
             elif returncode == 0:
                 status = "completed"
                 message = "Program completed successfully."
+            elif language == "cpp" and not execution.get("program_started"):
+                status = "failed"
+                message = "C++ compilation failed inside the Docker sandbox."
+            elif returncode == 137:
+                status = "failed"
+                message = "The Docker sandbox stopped the program at a resource limit."
             else:
                 status = "failed"
                 message = f"Program exited with code {returncode}."
@@ -1263,11 +1312,18 @@ class ConnectionManager:
                 "stderr",
             )
             status = "failed"
-            message = "The host could not run this program."
+            message = "The Docker sandbox could not run this program."
         finally:
+            if semaphore_acquired:
+                self.docker_execution_semaphore.release()
             process = execution.get("process")
             if process and process.returncode is None:
-                await self._terminate_execution_process(process)
+                await self._terminate_execution_process(process, execution)
+            else:
+                await asyncio.to_thread(
+                    remove_docker_container,
+                    execution.get("container_name"),
+                )
             execution["accepts_input"] = False
             shutil.rmtree(execution["temp_dir"], ignore_errors=True)
             async with self.execution_lock:
@@ -1292,15 +1348,15 @@ class ConnectionManager:
         user: Dict[str, Any],
         line: Any,
     ) -> None:
-        if user.get("role") != "admin":
-            raise HTTPException(
-                status_code=403,
-                detail="Only the Admin can send input to a host C++ program.",
-            )
         account_id = str(user.get("account_id", ""))
         execution = self.execution_sessions.get(account_id)
         if not execution or execution.get("connection_id") != connection_id:
             raise HTTPException(status_code=404, detail="No program is waiting for your input.")
+        if execution.get("language") == "cpp" and user.get("role") != "admin":
+            raise HTTPException(
+                status_code=403,
+                detail="Only the Admin can send input to a Docker C++ program.",
+            )
         value = str(line)
         if "\n" in value or "\r" in value:
             raise HTTPException(status_code=422, detail="Send one input line at a time.")
@@ -1363,7 +1419,7 @@ class ConnectionManager:
         )
         process = execution.get("process")
         if process and process.returncode is None:
-            await self._terminate_execution_process(process)
+            await self._terminate_execution_process(process, execution)
         elif execution.get("task"):
             execution["task"].cancel()
         return True
@@ -1694,6 +1750,7 @@ def get_info() -> Dict[str, Any]:
         "palette": COLOR_PALETTE,
         "claimed_colors": manager.get_claimed_colors(),
         "active_users": manager.get_active_users(),
+        **manager.public_classroom_settings(),
     }
 
 
@@ -1751,27 +1808,46 @@ async def logout(
 async def create_guest_request(
     request: GuestJoinRequest,
 ) -> Dict[str, Any]:
-    join_request = manager.create_guest_join_request(request.full_name)
+    auto_approve = bool(manager.access_control.get("guest_auto_approval", False))
+    join_request = manager.create_guest_join_request(
+        request.full_name,
+        auto_approve=auto_approve,
+    )
     public_request = {
         "id": join_request["id"],
         "full_name": join_request["full_name"],
         "status": join_request["status"],
         "requested_at": join_request["requested_at"],
     }
-    await manager.send_to_role(
-        "admin",
-        {
-            "type": "join_request_created",
-            "request": public_request,
-            "pending_count": len(manager.public_join_requests()),
-        },
-    )
-    return {
+    if not auto_approve:
+        await manager.send_to_role(
+            "admin",
+            {
+                "type": "join_request_created",
+                "request": public_request,
+                "pending_count": len(manager.public_join_requests()),
+            },
+        )
+    response = {
         "request_id": join_request["id"],
         "request_token": join_request["request_token"],
         "status": join_request["status"],
         "full_name": join_request["full_name"],
     }
+    if auto_approve:
+        response.update(
+            manager.get_guest_join_status(
+                join_request["id"],
+                join_request["request_token"],
+            )
+        )
+        await manager.broadcast(
+            {
+                "type": "guest_records_updated",
+                "guests": manager.public_guests(),
+            }
+        )
+    return response
 
 
 @app.get("/api/guest-name-availability")
@@ -1910,6 +1986,69 @@ async def change_admin_name(
         }
     )
     return {"status": "success", "username": new_name}
+
+
+@app.put("/api/settings/python-execution-mode")
+async def update_python_execution_mode(
+    request: PythonExecutionModeRequest,
+    authorization: Optional[str] = Header(default=None),
+) -> Dict[str, Any]:
+    require_session(authorization, role="admin")
+    mode = request.mode.strip().lower()
+    if mode not in {"browser", "docker"}:
+        raise HTTPException(
+            status_code=422,
+            detail="Python execution mode must be browser or docker.",
+        )
+    if mode == "docker":
+        try:
+            await asyncio.to_thread(ensure_python_docker_ready)
+        except DockerExecutionError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+    manager.access_control["python_execution_mode"] = mode
+    manager.save_access()
+    settings = manager.public_classroom_settings()
+    await manager.broadcast({"type": "classroom_settings_updated", **settings})
+    return {"status": "success", **settings}
+
+
+@app.put("/api/settings/guest-auto-approval")
+async def update_guest_auto_approval(
+    request: ToggleRequest,
+    authorization: Optional[str] = Header(default=None),
+) -> Dict[str, Any]:
+    require_session(authorization, role="admin")
+    manager.access_control["guest_auto_approval"] = request.enabled
+    manager.save_access()
+
+    approved_names = []
+    if request.enabled:
+        pending_ids = [item["id"] for item in manager.public_join_requests()]
+        for request_id in pending_ids:
+            approved = manager.approve_guest_join_request(request_id)
+            approved_names.append(approved["full_name"])
+
+    settings = manager.public_classroom_settings()
+    await manager.broadcast({"type": "classroom_settings_updated", **settings})
+    if approved_names:
+        await manager.send_to_role(
+            "admin",
+            {
+                "type": "join_requests_updated",
+                "pending_count": len(manager.public_join_requests()),
+            },
+        )
+        await manager.broadcast(
+            {
+                "type": "guest_records_updated",
+                "guests": manager.public_guests(),
+            }
+        )
+    return {
+        "status": "success",
+        **settings,
+        "approved_names": approved_names,
+    }
 
 
 @app.get("/api/access")
@@ -2166,52 +2305,8 @@ def parse_execution_problems(
 
 
 def run_cpp(code: str, stdin: str, timeout: float) -> Dict[str, Any]:
-    compiler = resolve_cpp_compiler()
-    if not compiler:
-        return {
-            "stdout": "",
-            "stderr": (
-                "C++ compiler not found. Install g++ or clang++, add it to PATH, "
-                "or set LIVE_EDITOR_CPP_COMPILER."
-            ),
-            "returncode": -1,
-            "stage": "compile",
-        }
-    with tempfile.TemporaryDirectory(prefix="live_editor_cpp_") as temp_dir:
-        source_path = os.path.join(temp_dir, "main.cpp")
-        output_path = os.path.join(
-            temp_dir,
-            "program.exe" if os.name == "nt" else "program",
-        )
-        with open(source_path, "w", encoding="utf-8") as source_file:
-            source_file.write(code)
-        compile_process = subprocess.run(
-            [compiler, source_path, "-std=c++17", "-O0", "-o", output_path],
-            capture_output=True,
-            text=True,
-            timeout=min(timeout * 2, 15),
-        )
-        if compile_process.returncode != 0:
-            return {
-                "stdout": compile_process.stdout,
-                "stderr": compile_process.stderr,
-                "returncode": compile_process.returncode,
-                "stage": "compile",
-            }
-        run_process = subprocess.run(
-            [output_path],
-            input=stdin,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            cwd=temp_dir,
-        )
-        return {
-            "stdout": run_process.stdout,
-            "stderr": run_process.stderr,
-            "returncode": run_process.returncode,
-            "stage": "run",
-        }
+    """Run C++ only through the restricted Docker execution image."""
+    return run_cpp_in_docker(code, stdin, timeout)
 
 
 @app.post("/api/run")
@@ -2238,26 +2333,51 @@ async def run_code(
     timeout = min(max(request.timeout or 5.0, 1.0), 10.0)
     started = time.time()
     try:
-        result = run_cpp(request.code, request.stdin, timeout)
-        result.update(
-            {
-                "elapsed": round(time.time() - started, 3),
-                "timed_out": False,
-            }
+        await asyncio.wait_for(
+            manager.docker_execution_semaphore.acquire(),
+            timeout=5.0,
         )
-        result["problems"] = parse_execution_problems(result, request.language)
-        return result
-    except subprocess.TimeoutExpired:
-        result = {
-            "stdout": "",
-            "stderr": f"Execution timed out after {timeout} seconds.",
-            "returncode": -1,
-            "elapsed": round(time.time() - started, 3),
-            "timed_out": True,
-            "stage": "run",
-        }
-        result["problems"] = parse_execution_problems(result, request.language)
-        return result
+    except asyncio.TimeoutError as exc:
+        raise HTTPException(
+            status_code=429,
+            detail="All Docker C++ execution slots are busy. Try again shortly.",
+        ) from exc
+    try:
+        try:
+            result = await asyncio.to_thread(
+                run_cpp,
+                request.code,
+                request.stdin,
+                timeout,
+            )
+            timed_out = result.get("returncode") == 124
+            if timed_out and not result.get("stderr"):
+                result["stderr"] = f"Execution timed out after {timeout:g} seconds."
+            if timed_out:
+                result["returncode"] = -1
+            result.update(
+                {
+                    "elapsed": round(time.time() - started, 3),
+                    "timed_out": timed_out,
+                }
+            )
+            result["problems"] = parse_execution_problems(result, request.language)
+            return result
+        except DockerExecutionError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except subprocess.TimeoutExpired:
+            result = {
+                "stdout": "",
+                "stderr": f"Execution timed out after {timeout} seconds.",
+                "returncode": -1,
+                "elapsed": round(time.time() - started, 3),
+                "timed_out": True,
+                "stage": "run",
+            }
+            result["problems"] = parse_execution_problems(result, request.language)
+            return result
+    finally:
+        manager.docker_execution_semaphore.release()
 
 
 @app.get("/api/snapshots")
@@ -2305,6 +2425,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str) -> None:
                 "claimed_colors": manager.get_claimed_colors(),
                 "active_users": manager.get_active_users(),
                 "guests": manager.public_guests(),
+                **manager.public_classroom_settings(),
             }
         )
 
@@ -2382,6 +2503,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str) -> None:
                             if user["role"] == "admin"
                             else 0
                         ),
+                        **manager.public_classroom_settings(),
                     }
                 )
                 await manager.broadcast(
@@ -2410,19 +2532,24 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str) -> None:
                         {"type": "terminal_error", "message": "Choose a valid code file first."}
                     )
                     continue
-                if file_data.get("language") != "cpp":
+                language = file_data.get("language", "python")
+                if (
+                    language == "python"
+                    and manager.access_control.get("python_execution_mode", "browser")
+                    != "docker"
+                ):
                     await websocket.send_json(
                         {
                             "type": "terminal_error",
-                            "message": "Python runs locally in the browser, not on the host.",
+                            "message": "Python is currently set to run inside each participant's browser.",
                         }
                     )
                     continue
-                if user.get("role") != "admin":
+                if language == "cpp" and user.get("role") != "admin":
                     await websocket.send_json(
                         {
                             "type": "terminal_error",
-                            "message": "Only the Admin can execute C++ on the host computer.",
+                            "message": "Only the Admin can execute C++ in the Docker sandbox.",
                         }
                     )
                     continue
@@ -2432,7 +2559,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str) -> None:
                         user,
                         file_id,
                         code,
-                        file_data.get("language", "python"),
+                        language,
                     )
                     await manager.broadcast(
                         {
@@ -2449,14 +2576,6 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str) -> None:
                     )
 
             elif message_type == "terminal_input":
-                if user.get("role") != "admin":
-                    await websocket.send_json(
-                        {
-                            "type": "terminal_error",
-                            "message": "Only the Admin can send C++ terminal input.",
-                        }
-                    )
-                    continue
                 try:
                     await manager.send_interactive_input(
                         client_id,
@@ -2469,14 +2588,6 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str) -> None:
                     )
 
             elif message_type == "terminal_stop":
-                if user.get("role") != "admin":
-                    await websocket.send_json(
-                        {
-                            "type": "terminal_error",
-                            "message": "Only the Admin can control host C++ programs.",
-                        }
-                    )
-                    continue
                 stopped = await manager.stop_interactive_execution(
                     client_id,
                     user,
@@ -2797,7 +2908,10 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 @app.get("/")
 def read_root() -> FileResponse:
-    return FileResponse(os.path.join(STATIC_DIR, "index.html"))
+    return FileResponse(
+        os.path.join(STATIC_DIR, "index.html"),
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
 
 
 if __name__ == "__main__":

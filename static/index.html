@@ -21,7 +21,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/addon/edit/matchbrackets.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/addon/selection/active-line.min.js"></script>
 
-  <link rel="stylesheet" href="/static/style.css?v=5.0-browser-python-2" />
+  <link rel="stylesheet" href="/static/style.css?v=5.1-python-modes-2" />
 </head>
 <body>
   <div id="toastContainer" class="toast-container" aria-live="polite"></div>
@@ -123,7 +123,25 @@
           <span class="status-indicator" id="wsStatus">
             <span class="status-dot"></span><span id="wsStatusText">Connecting...</span>
           </span>
-          <span class="execution-mode-tag browser" id="executionModeTag">Runs in this browser</span>
+          <div class="execution-mode-control" id="executionModeControl">
+            <button class="execution-mode-tag browser" id="executionModeTag" type="button" aria-haspopup="menu" aria-expanded="false" title="Python runs in this browser">
+              <span id="executionModeText">Runs in this browser</span>
+              <i class="execution-mode-chevron" data-lucide="chevron-down"></i>
+            </button>
+            <div class="execution-mode-menu" id="executionModeMenu" role="menu" hidden>
+              <button class="execution-mode-option" type="button" role="menuitemradio" data-python-mode="browser" aria-checked="true">
+                <span class="execution-mode-option-icon browser"><i data-lucide="monitor"></i></span>
+                <span><strong>Browser Python</strong><small>Fast, local, standard library</small></span>
+                <i class="execution-mode-check" data-lucide="check"></i>
+              </button>
+              <button class="execution-mode-option" type="button" role="menuitemradio" data-python-mode="docker" aria-checked="false">
+                <span class="execution-mode-option-icon docker"><i data-lucide="box"></i></span>
+                <span><strong>Docker Python</strong><small>Host containers with approved libraries</small></span>
+                <i class="execution-mode-check" data-lucide="check"></i>
+              </button>
+              <p class="execution-mode-menu-help">Only the Admin can change the classroom mode.</p>
+            </div>
+          </div>
         </div>
 
         <div class="toolbar-right">
@@ -244,7 +262,7 @@
         <button class="role-card" id="btnChooseGuest" type="button">
           <i data-lucide="user-round"></i>
           <strong>Guest</strong>
-          <small>Request permission to join</small>
+          <small id="guestRoleHelp">Request permission to join</small>
         </button>
       </div>
 
@@ -267,7 +285,7 @@
           <input type="text" id="txtGuestName" class="custom-input" maxlength="50" autocomplete="name" placeholder="For example, Bob" aria-describedby="guestNameAvailability" required />
           <small id="guestNameAvailability" class="guest-name-availability" aria-live="polite"></small>
         </div>
-        <button class="btn btn-primary btn-block" id="btnRequestGuestJoin" type="submit" disabled><i data-lucide="send"></i> Request to join</button>
+        <button class="btn btn-primary btn-block" id="btnRequestGuestJoin" type="submit" disabled><i data-lucide="send"></i> <span id="guestJoinButtonLabel">Request to join</span></button>
       </form>
 
       <div id="loginColorSection" class="login-color-section" style="display:none;">
@@ -288,7 +306,7 @@
         <div class="dialog-icon-circle admin-icon">♛</div>
         <h2>Admin Settings</h2>
         <p>
-          Manage Guest requests, files, and global code access.
+          Manage Guest entry, files, and global code access.
           <span class="settings-resize-note">Drag the bottom-right corner to resize.</span>
         </p>
       </div>
@@ -322,6 +340,22 @@
             <span class="join-request-count" id="joinRequestsSettingsCount" style="display:none;">0</span>
           </div>
           <div class="join-requests-list" id="joinRequestsList"></div>
+        </section>
+
+        <section class="settings-section">
+          <div class="classroom-setting-row">
+            <div>
+              <h3><i data-lucide="door-open"></i> Guest entry</h3>
+              <p class="settings-help">Allow a Guest with the LAN address to join immediately after choosing an available name and colour.</p>
+              <p class="settings-warning"><i data-lucide="shield-alert"></i> Use this only on a trusted LAN. Admin approval is safer.</p>
+            </div>
+            <label class="access-switch classroom-setting-switch">
+              <input id="chkGuestAutoApproval" type="checkbox" aria-label="Allow Guests to join without Admin approval" />
+              <span class="access-switch-track"></span>
+              <span class="access-switch-text" id="guestAutoApprovalState">Off</span>
+            </label>
+          </div>
+          <div class="form-message" id="guestAutoApprovalMessage"></div>
         </section>
 
         <section class="settings-section">
@@ -547,6 +581,6 @@
     </div>
   </dialog>
 
-  <script src="/static/app.js?v=5.0-browser-python-2"></script>
+  <script src="/static/app.js?v=5.1-python-modes-2"></script>
 </body>
 </html>

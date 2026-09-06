@@ -23,6 +23,9 @@ const state = {
   guestNameCheckSequence: 0,
   guestNameCheckTimer: null,
   guestJoinWaiting: false,
+  guestAutoApproval: false,
+  pythonExecutionMode: 'browser',
+  pythonModeMenuOpen: false,
   editableOwnerIds: new Set(),
   globalEditor: false,
   editor: null,
@@ -71,6 +74,7 @@ const elements = {
   loginSubtitle: $('loginSubtitle'),
   btnChooseAdmin: $('btnChooseAdmin'),
   btnChooseGuest: $('btnChooseGuest'),
+  guestRoleHelp: $('guestRoleHelp'),
   frmAdminLogin: $('frmAdminLogin'),
   frmGuestLogin: $('frmGuestLogin'),
   btnBackFromAdmin: $('btnBackFromAdmin'),
@@ -79,6 +83,7 @@ const elements = {
   txtGuestName: $('txtGuestName'),
   guestNameAvailability: $('guestNameAvailability'),
   btnRequestGuestJoin: $('btnRequestGuestJoin'),
+  guestJoinButtonLabel: $('guestJoinButtonLabel'),
   loginColorSection: $('loginColorSection'),
   colorGrid: $('colorGrid'),
   loginMessage: $('loginMessage'),
@@ -98,7 +103,10 @@ const elements = {
   avatarGroup: $('avatarGroup'),
   wsStatus: $('wsStatus'),
   wsStatusText: $('wsStatusText'),
+  executionModeControl: $('executionModeControl'),
   executionModeTag: $('executionModeTag'),
+  executionModeText: $('executionModeText'),
+  executionModeMenu: $('executionModeMenu'),
   fileTabs: $('fileTabs'),
   btnAddFile: $('btnAddFile'),
   tabCountLabel: $('tabCountLabel'),
@@ -132,6 +140,9 @@ const elements = {
   joinRequestsSection: $('joinRequestsSection'),
   joinRequestsSettingsCount: $('joinRequestsSettingsCount'),
   joinRequestsList: $('joinRequestsList'),
+  chkGuestAutoApproval: $('chkGuestAutoApproval'),
+  guestAutoApprovalState: $('guestAutoApprovalState'),
+  guestAutoApprovalMessage: $('guestAutoApprovalMessage'),
   guestRecordMessage: $('guestRecordMessage'),
   guestRecordsList: $('guestRecordsList'),
   numTabLimit: $('numTabLimit'),
@@ -952,6 +963,7 @@ async function fetchAppInfo() {
     state.palette = info.palette || [];
     state.claimedColors = info.claimed_colors || {};
     state.activeUsers = info.active_users || [];
+    applyClassroomSettings(info);
     chooseAvailableColor();
     renderColorGrid();
     renderPresence();
@@ -985,6 +997,42 @@ function showLoginDialog() {
   if (!elements.dlgLogin.open) elements.dlgLogin.showModal();
 }
 
+function updateGuestEntryCopy() {
+  if (elements.guestRoleHelp) {
+    elements.guestRoleHelp.textContent = state.guestAutoApproval
+      ? 'Join immediately with an available name'
+      : 'Request permission to join';
+  }
+  if (elements.guestJoinButtonLabel) {
+    elements.guestJoinButtonLabel.textContent = state.guestAutoApproval
+      ? 'Join classroom'
+      : 'Request to join';
+  }
+  if (
+    elements.frmGuestLogin?.style.display !== 'none'
+    && !state.guestJoinWaiting
+  ) {
+    elements.loginSubtitle.textContent = state.guestAutoApproval
+      ? 'Enter an available name and choose a colour to join immediately.'
+      : 'Enter your name. The Admin must approve your request before you can join.';
+  }
+}
+
+function applyClassroomSettings(data = {}) {
+  if (['browser', 'docker'].includes(data.python_execution_mode)) {
+    state.pythonExecutionMode = data.python_execution_mode;
+  }
+  if (typeof data.guest_auto_approval === 'boolean') {
+    state.guestAutoApproval = data.guest_auto_approval;
+  }
+  updateGuestEntryCopy();
+  if (elements.chkGuestAutoApproval) {
+    elements.chkGuestAutoApproval.checked = state.guestAutoApproval;
+    elements.guestAutoApprovalState.textContent = state.guestAutoApproval ? 'On' : 'Off';
+  }
+  updateExecutionControls();
+}
+
 function resetLoginChoice() {
   if (state.guestNameCheckTimer) {
     clearTimeout(state.guestNameCheckTimer);
@@ -997,6 +1045,7 @@ function resetLoginChoice() {
   elements.frmGuestLogin.style.display = 'none';
   elements.loginColorSection.style.display = 'none';
   elements.loginSubtitle.textContent = 'Choose how you want to sign in.';
+  updateGuestEntryCopy();
   setGuestNameAvailabilityMessage('');
   updateGuestJoinButtonState();
   setMessage(elements.loginMessage, '');
@@ -1009,7 +1058,9 @@ function selectLoginRole(role) {
   elements.loginColorSection.style.display = 'block';
   elements.loginSubtitle.textContent = role === 'admin'
     ? 'Enter the Admin password and choose a cursor color.'
-    : 'Enter your name. The Admin must approve your request before you can join.';
+    : state.guestAutoApproval
+      ? 'Enter an available name and choose a colour to join immediately.'
+      : 'Enter your name. The Admin must approve your request before you can join.';
   setMessage(elements.loginMessage, '');
   renderColorGrid();
   if (role === 'admin') elements.txtAdminPassword.focus();
@@ -1204,7 +1255,13 @@ async function requestGuestJoin(fullName) {
   state.guestJoinWaiting = true;
   elements.txtGuestName.disabled = true;
   updateGuestJoinButtonState();
-  setMessage(elements.loginMessage, 'Sending your request to the Admin...', 'success');
+  setMessage(
+    elements.loginMessage,
+    state.guestAutoApproval
+      ? 'Joining the classroom...'
+      : 'Sending your request to the Admin...',
+    'success',
+  );
   try {
     const response = await fetch('/api/guest-requests', {
       method: 'POST',
@@ -1213,6 +1270,11 @@ async function requestGuestJoin(fullName) {
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.detail || 'Unable to send the join request.');
+    if (data.status === 'approved' && data.token && data.user) {
+      clearPendingGuestRequest(false);
+      completeAuthentication(data, 'Joined the classroom.');
+      return;
+    }
     const pending = {
       requestId: data.request_id,
       requestToken: data.request_token,
@@ -1345,7 +1407,7 @@ function initializeWebSocket() {
 
   state.socket.addEventListener('close', () => {
     const hostProgramWasRunning = state.terminalRunning
-      && state.terminalRuntime === 'host-cpp';
+      && state.terminalRuntime?.startsWith('docker-');
     state.socketReady = false;
     state.joined = false;
     state.localTypingLocation = null;
@@ -1390,6 +1452,7 @@ function handleWsMessage(data) {
   switch (data.type) {
     case 'init':
       applyWorkspace(data.workspace, data.line_authors);
+      applyClassroomSettings(data);
       state.palette = data.palette || state.palette;
       state.claimedColors = data.claimed_colors || {};
       state.activeUsers = data.active_users || [];
@@ -1402,6 +1465,7 @@ function handleWsMessage(data) {
 
     case 'join_success':
       state.joined = true;
+      applyClassroomSettings(data);
       state.user = { ...state.user, ...data.user };
       state.chatHistory = data.messages || [];
       state.guests = data.guests || state.guests;
@@ -1526,8 +1590,21 @@ function handleWsMessage(data) {
       loadAccessSettings();
       break;
 
+    case 'classroom_settings_updated':
+      applyClassroomSettings(data);
+      if (state.user?.role === 'admin') {
+        setMessage(
+          elements.guestAutoApprovalMessage,
+          state.guestAutoApproval
+            ? 'Guests can now join immediately from this trusted LAN.'
+            : 'Admin approval is required for new Guests.',
+          'success',
+        );
+      }
+      break;
+
     case 'terminal_started':
-      state.terminalRuntime = 'host-cpp';
+      state.terminalRuntime = data.language === 'python' ? 'docker-python' : 'docker-cpp';
       state.terminalRunId = data.run_id;
       setTerminalRunning(true, false);
       break;
@@ -2067,6 +2144,9 @@ async function openSettings() {
   if (state.user?.role === 'admin') {
     elements.txtAdminDisplayName.value = state.user.username;
     elements.numTabLimit.value = state.tabLimit;
+    elements.chkGuestAutoApproval.checked = state.guestAutoApproval;
+    elements.guestAutoApprovalState.textContent = state.guestAutoApproval ? 'On' : 'Off';
+    setMessage(elements.guestAutoApprovalMessage, '');
     await Promise.all([loadAdminGuests(), loadJoinRequests(), loadAccessSettings()]);
     elements.dlgAdminSettings.showModal();
     elements.dlgAdminSettings.scrollTop = 0;
@@ -2380,27 +2460,112 @@ function canRunActiveFile() {
 
 function updateExecutionControls() {
   const file = getActiveFile();
-  if (!file) return;
+  if (!file || !elements.executionModeTag) return;
   const isCpp = file.language === 'cpp';
   const guestCpp = isCpp && state.user?.role !== 'admin';
+  const dockerPython = !isCpp && state.pythonExecutionMode === 'docker';
+  const adminCanSelectMode = !isCpp && state.user?.role === 'admin' && !state.terminalRunning;
   elements.btnRunCode.disabled = state.terminalRunning || guestCpp || !state.user;
   elements.btnRunCode.title = guestCpp
-    ? 'Guests can edit C++, but only the Admin can execute it on the host.'
+    ? 'Guests can edit C++, but only the Admin can execute it in Docker.'
     : isCpp
-      ? 'Compile and run C++ on the Admin host'
-      : 'Run Python safely inside this browser';
-  elements.executionModeTag.textContent = guestCpp
-    ? 'Admin-only execution'
+      ? 'Compile and run C++ inside an isolated Docker container'
+      : dockerPython
+        ? 'Run Python inside a restricted Docker container on the Admin host'
+        : 'Run Python safely inside this browser';
+  elements.executionModeText.textContent = guestCpp
+    ? 'Admin-only Docker execution'
     : isCpp
-      ? 'Runs on Admin host'
-      : 'Runs in this browser';
-  elements.executionModeTag.className = `execution-mode-tag ${guestCpp ? 'restricted' : isCpp ? 'host' : 'browser'}`;
+      ? 'Runs in Docker'
+      : dockerPython
+        ? 'Runs in Docker'
+        : 'Runs in this browser';
+  const visualMode = guestCpp ? 'restricted' : (isCpp || dockerPython) ? 'docker' : 'browser';
+  elements.executionModeTag.className = `execution-mode-tag ${visualMode}${adminCanSelectMode ? ' admin-selectable' : ''}`;
+  elements.executionModeTag.disabled = !adminCanSelectMode;
+  elements.executionModeTag.title = adminCanSelectMode
+    ? 'Change the Python execution mode for everyone'
+    : guestCpp
+      ? 'Only the Admin can run C++ in Docker'
+      : isCpp
+        ? 'C++ runs in Docker'
+        : `The Admin selected ${dockerPython ? 'Docker' : 'browser'} Python`;
+  document.querySelectorAll('[data-python-mode]').forEach((option) => {
+    option.setAttribute(
+      'aria-checked',
+      option.dataset.pythonMode === state.pythonExecutionMode ? 'true' : 'false',
+    );
+  });
+  if (!adminCanSelectMode) closePythonModeMenu();
   if (!state.terminalRunning) {
     elements.terminalInput.placeholder = guestCpp
       ? 'Guests cannot execute C++ yet.'
       : isCpp
         ? 'Run C++ to enter input...'
-        : 'Run Python to enter input...';
+        : dockerPython
+          ? 'Run Docker Python to enter input...'
+          : 'Run browser Python to enter input...';
+  }
+}
+
+function closePythonModeMenu() {
+  state.pythonModeMenuOpen = false;
+  if (!elements.executionModeMenu || !elements.executionModeTag) return;
+  elements.executionModeMenu.hidden = true;
+  elements.executionModeTag.setAttribute('aria-expanded', 'false');
+}
+
+function togglePythonModeMenu(event) {
+  event.preventDefault();
+  event.stopPropagation();
+  if (elements.executionModeTag.disabled || state.user?.role !== 'admin') return;
+  state.pythonModeMenuOpen = !state.pythonModeMenuOpen;
+  elements.executionModeMenu.hidden = !state.pythonModeMenuOpen;
+  elements.executionModeTag.setAttribute(
+    'aria-expanded',
+    state.pythonModeMenuOpen ? 'true' : 'false',
+  );
+}
+
+function handlePythonModeMenuClick(event) {
+  event.preventDefault();
+  event.stopPropagation();
+  const option = event.target.closest('[data-python-mode]');
+  if (!option || option.disabled || !elements.executionModeMenu.contains(option)) return;
+  setPythonExecutionMode(option.dataset.pythonMode);
+}
+
+async function setPythonExecutionMode(mode) {
+  if (state.user?.role !== 'admin' || !['browser', 'docker'].includes(mode)) return;
+  if (mode === state.pythonExecutionMode) {
+    closePythonModeMenu();
+    return;
+  }
+  document.querySelectorAll('[data-python-mode]').forEach((option) => {
+    option.disabled = true;
+  });
+  try {
+    const response = await authorizedFetch('/api/settings/python-execution-mode', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || 'Unable to change Python mode.');
+    applyClassroomSettings(data);
+    showToast(
+      mode === 'docker'
+        ? 'Python now runs in restricted Docker containers for everyone.'
+        : 'Python now runs locally in each participant\'s browser.',
+      'success',
+    );
+  } catch (error) {
+    showToast(error.message, 'error');
+  } finally {
+    document.querySelectorAll('[data-python-mode]').forEach((option) => {
+      option.disabled = false;
+    });
+    closePythonModeMenu();
   }
 }
 
@@ -2558,7 +2723,7 @@ function handleBrowserPythonMessage(event) {
 
 function ensureBrowserPythonWorker() {
   if (state.pythonWorker) return state.pythonWorker;
-  const worker = new Worker('/static/python-worker.mjs?v=5.0-browser-python-2', {
+  const worker = new Worker('/static/python-worker.mjs?v=5.1-python-modes-1', {
     type: 'module',
     name: 'wifi-codeshare-python',
   });
@@ -2632,10 +2797,24 @@ function runCurrentFile() {
   elements.outputDrawer.classList.remove('minimized');
   elements.execTimeTag.style.display = 'none';
   if (file.language === 'python') {
-    runBrowserPython(state.editor.getValue());
+    if (state.pythonExecutionMode === 'browser') {
+      runBrowserPython(state.editor.getValue());
+      return;
+    }
+    if (state.socket?.readyState !== WebSocket.OPEN) {
+      showToast('The live connection is not ready yet.', 'error');
+      return;
+    }
+    state.terminalRuntime = 'docker-python';
+    setTerminalRunning(true, false);
+    sendWsMessage({
+      type: 'terminal_run',
+      file_id: file.id,
+      code: state.editor.getValue(),
+    });
     return;
   }
-  state.terminalRuntime = 'host-cpp';
+  state.terminalRuntime = 'docker-cpp';
   setTerminalRunning(true, false);
   sendWsMessage({
     type: 'terminal_run',
@@ -3259,6 +3438,8 @@ function bindInterfaceEvents() {
   });
   elements.btnFontInc.addEventListener('click', () => setFontSize(currentFontSize + 1));
   elements.btnFontDec.addEventListener('click', () => setFontSize(currentFontSize - 1));
+  elements.executionModeTag.addEventListener('click', togglePythonModeMenu);
+  elements.executionModeMenu.addEventListener('click', handlePythonModeMenuClick);
 
   elements.btnChooseAdmin.addEventListener('click', () => selectLoginRole('admin'));
   elements.btnChooseGuest.addEventListener('click', () => selectLoginRole('guest'));
@@ -3387,6 +3568,42 @@ function bindInterfaceEvents() {
     state.user.username = data.username;
     updateSignedInUI();
     setMessage(elements.adminNameMessage, 'Admin name updated.', 'success');
+  });
+
+  elements.chkGuestAutoApproval.addEventListener('change', async () => {
+    const enabled = elements.chkGuestAutoApproval.checked;
+    elements.chkGuestAutoApproval.disabled = true;
+    elements.guestAutoApprovalState.textContent = enabled ? 'On' : 'Off';
+    setMessage(elements.guestAutoApprovalMessage, 'Saving...', 'success');
+    try {
+      const response = await authorizedFetch('/api/settings/guest-auto-approval', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'Unable to update Guest entry.');
+      applyClassroomSettings(data);
+      const approvedCount = data.approved_names?.length || 0;
+      setMessage(
+        elements.guestAutoApprovalMessage,
+        enabled
+          ? approvedCount
+            ? `Auto-join is on. ${approvedCount} waiting Guest${approvedCount === 1 ? '' : 's'} approved.`
+            : 'Auto-join is on. New Guests can join immediately.'
+          : 'Auto-join is off. New Guests need Admin approval.',
+        'success',
+      );
+      if (approvedCount) {
+        await Promise.all([loadJoinRequests(), loadAdminGuests(), loadAccessSettings()]);
+      }
+    } catch (error) {
+      elements.chkGuestAutoApproval.checked = !enabled;
+      elements.guestAutoApprovalState.textContent = enabled ? 'Off' : 'On';
+      setMessage(elements.guestAutoApprovalMessage, error.message, 'error');
+    } finally {
+      elements.chkGuestAutoApproval.disabled = false;
+    }
   });
 
   elements.btnSaveTabLimit.addEventListener('click', async () => {
@@ -3526,8 +3743,13 @@ function bindInterfaceEvents() {
   document.addEventListener('click', () => {
     closeChatActionMenus();
     closeJoinRequestPopover();
+    closePythonModeMenu();
   });
   window.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && state.pythonModeMenuOpen) {
+      closePythonModeMenu();
+      return;
+    }
     if (event.key === 'Escape' && state.joinRequestPopoverOpen) {
       closeJoinRequestPopover();
       return;
