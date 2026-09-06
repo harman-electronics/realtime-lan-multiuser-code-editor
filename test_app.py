@@ -1,5 +1,5 @@
 import json
-import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -7,6 +7,14 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 import app as app_module
+
+
+def docker_cpp_runner_available():
+    try:
+        app_module.ensure_cpp_docker_ready()
+        return True
+    except app_module.DockerExecutionError:
+        return False
 
 
 class LiveEditorTestCase(unittest.TestCase):
@@ -329,7 +337,7 @@ class LiveEditorTestCase(unittest.TestCase):
         self.assertIn("Next request opens after a decision", html)
         self.assertIn(".join-request-popover-row.is-active", stylesheet)
         self.assertIn(".join-request-popover-row.is-queued", stylesheet)
-        self.assertIn("5.0-browser-python-2", html)
+        self.assertIn("5.1-docker-cpp-1", html)
 
     def test_manual_student_creation_is_removed_and_admin_can_remove_guest(self):
         admin_token = self.login_admin()
@@ -630,7 +638,7 @@ class LiveEditorTestCase(unittest.TestCase):
         self.assertEqual(response.json()["username"], "Professor Ada")
         self.assertEqual(self.manager.get_session(admin_token)["role"], "admin")
 
-    def test_host_execution_allows_only_admin_cpp(self):
+    def test_execution_policy_allows_only_admin_docker_cpp(self):
         unauthenticated = self.client.post(
             "/api/run",
             json={"code": "print('blocked')", "language": "python"},
@@ -680,12 +688,53 @@ class LiveEditorTestCase(unittest.TestCase):
         self.assertTrue((static_directory / "vendor" / "pyodide" / "python_stdlib.zip").is_file())
         self.assertIn("BROWSER_PYTHON_VERSION = '314.0.5'", runtime)
         self.assertIn("replayBrowserPython", runtime)
-        self.assertIn("new Worker('/static/python-worker.mjs?v=5.0-browser-python-2'", javascript)
+        self.assertIn("new Worker('/static/python-worker.mjs?v=5.1-docker-cpp-1'", javascript)
         self.assertIn("Runs in this browser", html)
         self.assertNotIn("cdn.jsdelivr.net", runtime)
         self.assertIn("runtime_loading", worker)
 
-    def test_websocket_host_execution_rejects_python_and_guest_cpp(self):
+    def test_cpp_docker_command_enforces_sandbox_boundaries(self):
+        with tempfile.TemporaryDirectory() as source_directory:
+            command = app_module.build_cpp_docker_command(
+                "docker",
+                source_directory,
+                "wifi-codeshare-cpp-test",
+                execution_seconds=7,
+            )
+
+        joined = " ".join(command)
+        self.assertIn("--network none", joined)
+        self.assertIn("--ipc none", joined)
+        self.assertIn("--restart no", joined)
+        self.assertIn("--init", command)
+        self.assertIn("--read-only", command)
+        self.assertIn("--cap-drop ALL", joined)
+        self.assertIn("no-new-privileges:true", command)
+        self.assertIn("--memory 512m", joined)
+        self.assertIn("--memory-swap 512m", joined)
+        self.assertIn("--cpus 1.0", joined)
+        self.assertIn("--pids-limit 64", joined)
+        self.assertIn("target=/source,readonly", joined)
+        self.assertIn("LIVE_EDITOR_EXECUTION_TIMEOUT=7", command)
+        self.assertIn("--user 10001:10001", joined)
+        self.assertNotIn("--privileged", command)
+        self.assertNotIn("docker.sock", joined)
+        self.assertEqual(command[-1], app_module.CPP_DOCKER_IMAGE)
+
+        root = Path(__file__).resolve().parent
+        dockerfile = (root / "docker" / "cpp-runner" / "Dockerfile").read_text(
+            encoding="utf-8"
+        )
+        runner = (root / "docker" / "cpp-runner" / "runner.sh").read_text(
+            encoding="utf-8"
+        )
+        setup_script = (root / "setup-docker.cmd").read_text(encoding="utf-8")
+        self.assertIn("gcc:14.2.0-bookworm@sha256:", dockerfile)
+        self.assertIn("USER 10001:10001", dockerfile)
+        self.assertIn("__WIFI_CODESHARE_CPP_READY__", runner)
+        self.assertIn("docker build --pull", setup_script)
+
+    def test_websocket_docker_execution_rejects_python_and_guest_cpp(self):
         self.assertEqual(app_module.MAX_INTERACTIVE_EXECUTION_SECONDS, 60.0)
         self.assertEqual(app_module.MAX_INTERACTIVE_OUTPUT_CHARS, 100_000)
         self.assertEqual(app_module.MAX_INTERACTIVE_EXECUTIONS, 20)
@@ -742,15 +791,16 @@ class LiveEditorTestCase(unittest.TestCase):
         self.assertIn("initializeTerminalResize", javascript)
         self.assertIn("runBrowserPython", javascript)
         self.assertIn("stopBrowserPython", javascript)
-        self.assertIn("Admin-only execution", javascript)
+        self.assertIn("Admin-only Docker execution", javascript)
+        self.assertIn("Runs in Docker", javascript)
         self.assertIn(".terminal-status", stylesheet)
         self.assertIn(".execution-mode-tag", stylesheet)
         self.assertIn(".terminal-resize-handle", stylesheet)
         self.assertIn("color: var(--warning-color);", stylesheet)
 
     @unittest.skipUnless(
-        shutil.which("g++") or shutil.which("clang++"),
-        "g++ or clang++ is not installed on the host",
+        docker_cpp_runner_available(),
+        "The restricted Docker C++ image is not ready",
     )
     def test_interactive_cpp_terminal_accepts_live_input(self):
         cpp_file = self.manager.create_file("interactive.cpp", "cpp")
@@ -775,6 +825,36 @@ class LiveEditorTestCase(unittest.TestCase):
             )
             self.receive_websocket_type(websocket, "terminal_started")
             self.receive_websocket_type(websocket, "terminal_ready")
+            execution = self.manager.execution_sessions["admin"]
+            inspect_process = subprocess.run(
+                [
+                    execution["docker"],
+                    "container",
+                    "inspect",
+                    execution["container_name"],
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+            self.assertEqual(inspect_process.returncode, 0, inspect_process.stderr)
+            container = json.loads(inspect_process.stdout)[0]
+            host_config = container["HostConfig"]
+            self.assertEqual(container["Config"]["User"], "10001:10001")
+            self.assertEqual(host_config["NetworkMode"], "none")
+            self.assertEqual(host_config["IpcMode"], "none")
+            self.assertEqual(host_config["RestartPolicy"]["Name"], "no")
+            self.assertTrue(host_config["ReadonlyRootfs"])
+            self.assertIn("ALL", host_config["CapDrop"])
+            self.assertIn("no-new-privileges:true", host_config["SecurityOpt"])
+            self.assertEqual(host_config["Memory"], 512 * 1024 * 1024)
+            self.assertEqual(host_config["NanoCpus"], 1_000_000_000)
+            self.assertEqual(host_config["PidsLimit"], 64)
+            source_mount = next(
+                mount for mount in container["Mounts"] if mount["Destination"] == "/source"
+            )
+            self.assertFalse(source_mount["RW"])
             websocket.send_json({"type": "terminal_input", "text": "10 5"})
             finished, messages = self.receive_websocket_type(
                 websocket,
@@ -790,8 +870,8 @@ class LiveEditorTestCase(unittest.TestCase):
             self.assertEqual(finished["returncode"], 0)
 
     @unittest.skipUnless(
-        shutil.which("g++") or shutil.which("clang++"),
-        "g++ or clang++ is not installed on the host",
+        docker_cpp_runner_available(),
+        "The restricted Docker C++ image is not ready",
     )
     def test_cpp17_compilation_and_execution_with_input(self):
         token = self.login_admin()
@@ -961,7 +1041,7 @@ class LiveEditorTestCase(unittest.TestCase):
         self.assertIn("margin-left: 3ch;", stylesheet)
         self.assertIn(".remote-cursor > .line-typing-badge", stylesheet)
         self.assertIn("left: 3ch;", stylesheet)
-        self.assertIn("5.0-browser-python-2", html)
+        self.assertIn("5.1-docker-cpp-1", html)
 
 
 if __name__ == "__main__":
