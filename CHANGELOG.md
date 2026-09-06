@@ -3,80 +3,93 @@
 All notable changes to the Real-Time LAN Multiuser Code Editor will be recorded
 in this file.
 
-## Version 5.1 — Docker-Isolated C++ Execution
+## Version 5.1 — Restricted Docker Execution and Classroom Controls
 
-Version 5.1 removes direct C++ compilation and execution from the Admin
-operating system. Every Admin C++ run now uses a new restricted Linux container
-that is removed when the run finishes, reaches a limit, is stopped, or fails.
-Browser Python and the existing collaboration workflow remain unchanged.
+Version 5.1 removes direct C++ execution from the Windows host, adds optional
+restricted Docker execution for Python, and gives the Admin two synchronized
+classroom controls. Browser Python remains the default. The Admin can change
+the Python mode for everyone from the execution pill and can optionally allow
+Guests to join without waiting for approval on a trusted LAN.
 
 ### Added and changed
 
-- Added a pinned GCC 14.2 Bookworm C++ execution image and non-root runner.
-- Added `setup-docker.cmd` for one-command Windows image setup; Docker sign-in
+- Added a pinned GCC 14.2 Bookworm image for Admin-only C++17 compilation and
+  execution.
+- Added a pinned Python 3.14 Bookworm image with NumPy 2.5.2, pandas 3.0.5,
+  Matplotlib 3.11.1, and SymPy 1.14.0.
+- Changed the Python execution status pill into an Admin-only menu with
+  **Browser Python** and **Docker Python** choices. The saved classroom mode is
+  broadcast to every connected user; Browser Python is the default.
+- Added **Admin Settings → Guest entry**. It is off by default. When enabled,
+  existing waiting requests are accepted and new Guests with an available name
+  and colour join immediately without creating a notification queue item.
+- Retained duplicate active-name rejection, one active session per approved
+  Guest, and FIFO approval when automatic entry is off.
+- Added `setup-docker.cmd` builds for both local execution images; Docker sign-in
   is not required.
-- Replaced both interactive WebSocket C++ execution and the REST compatibility
-  route with the same fixed Docker command policy.
-- Preserved Admin terminal input, streamed stdout/stderr, compiler diagnostics,
-  Stop, timeouts, output limits, and source-line problem details.
-- Changed the Admin C++ status to **Runs in Docker** and the Guest status to
-  **Admin-only Docker execution**.
-- Removed the requirement for `g++`, `clang++`, or Microsoft compiler tools on
-  the Windows host. GCC and its standard headers are contained in the image.
-- Increased the execution matrix from 12 to 17 checks.
+- Preserved live terminal input, streamed stdout/stderr, Stop, timeouts, output
+  limits, C++ compiler diagnostics, and source-line problem details.
+- Removed the requirement for a C++ compiler or Python packages on connected
+  devices. Only the Admin host prepares Docker.
 
 ### Security changes
 
-- Runs every C++ submission as Linux user and group `10001:10001`, not root.
+- Runs every Docker Python and C++ submission as Linux user/group `10001:10001`.
 - Disables container networking and IPC, drops all Linux capabilities, enables
-  `no-new-privileges`, and keeps the container root filesystem read-only.
-- Exposes only a unique temporary source directory as a read-only `/source`
-  mount. The project directory, saved data, host filesystem, and Docker socket
-  are never mounted into the execution container.
-- Compiles and runs only in a disposable 128 MB tmpfs workspace.
-- Limits each container to 512 MB RAM with no additional swap, one CPU, 64
-  processes, and 256 open files.
-- Retains a 15-second compilation timeout, per-run execution timeout,
-  100,000-character output cap, input limits, and a four-container server cap.
-- Explicitly removes a named container when the Admin stops a run or when the
-  server detects a timeout or output limit. The container runner also enforces
-  its own timeout if the server disconnects unexpectedly.
-- Keeps C++ execution and input Admin-only at both the interface and server
-  authorization layers. Guests can continue editing C++ collaboratively.
+  `no-new-privileges`, and keeps the root filesystem read-only.
+- Mounts only a unique temporary source directory at read-only `/source`; the
+  project, saved data, host filesystem, and Docker socket are never mounted.
+- Runs in a disposable 128 MB tmpfs workspace and limits each container to
+  512 MB RAM with no additional swap, one CPU, 64 processes, and 256 open files.
+- Enforces 60-second runs, 100,000 output characters, 4,096 characters per input
+  line, 20,000 input characters per run, one run per account, and four concurrent
+  Docker execution slots shared by Python and C++.
+- Removes named containers after completion, Stop, timeout, output limit, error,
+  disconnect, or server shutdown. Each runner also has an internal timeout.
+- Keeps C++ execution/input Admin-only. Docker Python is available to Admin and
+  approved Guests only when the Admin selects it.
+- Warns that automatic Guest entry should be enabled only on a trusted LAN;
+  possession of the LAN URL is sufficient to enter while it is on.
 
 ### Verification
 
-- Passed all 21 permanent automated tests.
-- Passed all 17 execution-matrix checks: eight real browser-Python checks and
-  nine real Docker C++ checks.
-- Verified C++17/STL, interactive and saved input, compilation errors, timeouts,
-  output limiting, non-root identity, read-only host/source boundaries,
-  disabled networking, image identity, and post-run container removal.
-- Inspected a live waiting container and confirmed its configured user, network
-  mode, read-only root, dropped capabilities, security options, memory, CPU,
-  process limit, and read-only source mount.
+- Passed all 26 permanent automated tests.
+- Passed all 26 execution-matrix checks: eight real Browser Python checks, nine
+  real Docker Python checks, and nine real Docker C++ checks.
+- Verified interactive input, functions, loops, approved Python libraries,
+  runtime/compiler errors, timeouts, output limiting, non-root identity,
+  read-only boundaries, disabled networking, cleanup, and image identity.
+- Inspected live Python and C++ containers and confirmed the configured user,
+  network/IPC modes, read-only root, dropped capabilities, security option,
+  memory, CPU, process limit, and read-only source mount.
+- Verified default approval, automatic entry, pending-request admission,
+  duplicate active-name blocking, Admin-only settings, persistence, and live
+  setting broadcasts.
 - Verified the complete `setup-docker.cmd` path against Docker Desktop's WSL 2
   Linux engine.
 
 ### Main components changed
 
-- `docker_execution.py`: Docker discovery, image readiness, fixed security
-  arguments, output-capped REST execution, and cleanup.
-- `docker/cpp-runner/`: digest-pinned GCC image and non-root compile/run script.
-- `setup-docker.cmd`: Windows Docker engine check and local image build.
-- `app.py`: Docker-backed interactive and REST execution with Admin-only policy.
-- `static/app.js`, `static/index.html`, and `static/style.css`: Docker execution
-  labels and Version 5.1 cache identifiers.
-- `test_app.py` and `test_execution_matrix.py`: live Docker restrictions and
-  expanded regression/security coverage.
+- `docker_execution.py`: shared fixed Docker policy, image readiness, commands,
+  output handling, and cleanup for Python and C++.
+- `docker/cpp-runner/` and `docker/python-runner/`: digest-pinned non-root images
+  and fixed entry scripts.
+- `setup-docker.cmd`: Windows engine check and both local image builds.
+- `app.py`: persistent classroom settings, automatic Guest admission, broadcasts,
+  and per-user Docker Python/C++ execution sessions.
+- `static/app.js`, `static/index.html`, and `static/style.css`: Admin mode menu,
+  synchronized labels, Guest entry toggle, login copy, and cache identifiers.
+- `test_app.py` and `test_execution_matrix.py`: settings authorization, auto-join,
+  live containers, approved imports, and expanded regression/security coverage.
 
 ### Remaining limitations
 
 - Docker Desktop and its WSL 2 Linux engine must be running on the Admin host
-  for C++ execution. Browser Python and collaboration still work without it.
-- Containers substantially reduce risk but do not make arbitrary code execution
-  perfectly safe. The Admin should inspect collaborative code and keep Docker
-  Desktop updated.
+  for C++ and Docker Python. Browser Python and collaboration work without it.
+- Containers substantially reduce risk but are not a perfect security boundary.
+  Keep Docker Desktop updated and do not expose the server to the public internet.
+- Docker Python supports only its reviewed image packages. Arbitrary runtime
+  package installation is disabled because the container has no network.
 - Third-party C++ libraries and multi-file builds require a reviewed custom
   image and are not installed dynamically.
 
