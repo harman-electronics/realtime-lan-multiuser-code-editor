@@ -65,6 +65,14 @@ def resolve_docker_executable() -> Optional[str]:
                 "bin",
                 "docker.exe",
             ),
+            os.path.join(
+                os.environ.get("LOCALAPPDATA", ""),
+                "Programs",
+                "DockerDesktop",
+                "resources",
+                "bin",
+                "docker.exe",
+            ),
         ]
         for candidate in candidates:
             if candidate and os.path.isfile(candidate):

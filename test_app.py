@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -8,6 +9,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 import app as app_module
+import docker_execution as docker_module
 
 
 def docker_cpp_runner_available():
@@ -220,6 +222,26 @@ class LiveEditorTestCase(unittest.TestCase):
             "no-cache, no-store, must-revalidate",
         )
         self.assertIn("5.1-python-modes-2", response.text)
+
+    def test_docker_resolver_supports_current_per_user_install_path(self):
+        local_app_data = r"C:\Users\Test\AppData\Local"
+        expected = os.path.join(
+            local_app_data,
+            "Programs",
+            "DockerDesktop",
+            "resources",
+            "bin",
+            "docker.exe",
+        )
+        with (
+            patch.dict(os.environ, {"LOCALAPPDATA": local_app_data}, clear=False),
+            patch("docker_execution.shutil.which", return_value=None),
+            patch(
+                "docker_execution.os.path.isfile",
+                side_effect=lambda path: path == expected,
+            ),
+        ):
+            self.assertEqual(docker_module.resolve_docker_executable(), expected)
 
     def test_guest_request_rejection_and_secret_validation(self):
         request = self.request_guest("Rejected Guest")
@@ -866,7 +888,8 @@ class LiveEditorTestCase(unittest.TestCase):
         self.assertIn("gcc:14.2.0-bookworm@sha256:", dockerfile)
         self.assertIn("USER 10001:10001", dockerfile)
         self.assertIn("__WIFI_CODESHARE_CPP_READY__", runner)
-        self.assertIn("docker build --pull", setup_script)
+        self.assertIn('"%DOCKER_EXE%" build --pull', setup_script)
+        self.assertIn("Programs\\DockerDesktop\\resources\\bin\\docker.exe", setup_script)
 
     def test_python_docker_image_and_command_use_the_same_sandbox_boundaries(self):
         with tempfile.TemporaryDirectory() as source_directory:

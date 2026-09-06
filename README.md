@@ -121,6 +121,9 @@ This builds the pinned local `wifi-codeshare-cpp-runner:1.0` and
 `wifi-codeshare-python-runner:1.0` images. The editor and Browser Python still
 work when Docker is unavailable. Docker Python cannot be selected and C++ Run
 shows a clear setup or engine error until Docker is ready.
+The Windows launcher also detects current per-user Docker Desktop installations
+under `%LOCALAPPDATA%\Programs\DockerDesktop`, even when `docker.exe` is not yet
+listed in that CMD window's `PATH`.
 
 On macOS or Linux, build the same image with:
 
@@ -267,7 +270,7 @@ packages only by reviewing and rebuilding `docker/python-runner/Dockerfile`.
 
 ## Testing
 
-Version 5.1 passes **26/26 permanent automated tests** and **26/26 execution-
+Version 5.1 passes **28/28 permanent automated tests** and **26/26 execution-
 matrix checks**. Eight matrix checks exercise the real pinned Pyodide engine,
 nine exercise Docker Python, and nine exercise Docker C++. The matrix covers
 input, functions, loops, approved Python libraries, compiler/runtime errors,

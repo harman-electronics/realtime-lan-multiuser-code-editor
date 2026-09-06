@@ -22,6 +22,9 @@ Guests to join without waiting for approval on a trusted LAN.
   broadcast to every connected user; Browser Python is the default.
 - Fixed the Python mode menu in Chrome by routing clicks through the menu,
   keeping the menu above the editor, and preventing stale frontend caching.
+- Fixed Docker detection for current per-user Docker Desktop installations that
+  place the CLI under `%LOCALAPPDATA%\Programs\DockerDesktop` without adding it
+  to the current CMD `PATH`.
 - Added **Admin Settings → Guest entry**. It is off by default. When enabled,
   existing waiting requests are accepted and new Guests with an available name
   and colour join immediately without creating a notification queue item.
@@ -55,7 +58,7 @@ Guests to join without waiting for approval on a trusted LAN.
 
 ### Verification
 
-- Passed all 26 permanent automated tests.
+- Passed all 28 permanent automated tests.
 - Passed all 26 execution-matrix checks: eight real Browser Python checks, nine
   real Docker Python checks, and nine real Docker C++ checks.
 - Verified interactive input, functions, loops, approved Python libraries,
