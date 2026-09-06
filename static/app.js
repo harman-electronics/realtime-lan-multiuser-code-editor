@@ -1345,7 +1345,7 @@ function initializeWebSocket() {
 
   state.socket.addEventListener('close', () => {
     const hostProgramWasRunning = state.terminalRunning
-      && state.terminalRuntime === 'host-cpp';
+      && state.terminalRuntime === 'docker-cpp';
     state.socketReady = false;
     state.joined = false;
     state.localTypingLocation = null;
@@ -1527,7 +1527,7 @@ function handleWsMessage(data) {
       break;
 
     case 'terminal_started':
-      state.terminalRuntime = 'host-cpp';
+      state.terminalRuntime = 'docker-cpp';
       state.terminalRunId = data.run_id;
       setTerminalRunning(true, false);
       break;
@@ -2385,16 +2385,16 @@ function updateExecutionControls() {
   const guestCpp = isCpp && state.user?.role !== 'admin';
   elements.btnRunCode.disabled = state.terminalRunning || guestCpp || !state.user;
   elements.btnRunCode.title = guestCpp
-    ? 'Guests can edit C++, but only the Admin can execute it on the host.'
+    ? 'Guests can edit C++, but only the Admin can execute it in Docker.'
     : isCpp
-      ? 'Compile and run C++ on the Admin host'
+      ? 'Compile and run C++ inside an isolated Docker container'
       : 'Run Python safely inside this browser';
   elements.executionModeTag.textContent = guestCpp
-    ? 'Admin-only execution'
+    ? 'Admin-only Docker execution'
     : isCpp
-      ? 'Runs on Admin host'
+      ? 'Runs in Docker'
       : 'Runs in this browser';
-  elements.executionModeTag.className = `execution-mode-tag ${guestCpp ? 'restricted' : isCpp ? 'host' : 'browser'}`;
+  elements.executionModeTag.className = `execution-mode-tag ${guestCpp ? 'restricted' : isCpp ? 'docker' : 'browser'}`;
   if (!state.terminalRunning) {
     elements.terminalInput.placeholder = guestCpp
       ? 'Guests cannot execute C++ yet.'
@@ -2558,7 +2558,7 @@ function handleBrowserPythonMessage(event) {
 
 function ensureBrowserPythonWorker() {
   if (state.pythonWorker) return state.pythonWorker;
-  const worker = new Worker('/static/python-worker.mjs?v=5.0-browser-python-2', {
+  const worker = new Worker('/static/python-worker.mjs?v=5.1-docker-cpp-1', {
     type: 'module',
     name: 'wifi-codeshare-python',
   });
@@ -2635,7 +2635,7 @@ function runCurrentFile() {
     runBrowserPython(state.editor.getValue());
     return;
   }
-  state.terminalRuntime = 'host-cpp';
+  state.terminalRuntime = 'docker-cpp';
   setTerminalRunning(true, false);
   sendWsMessage({
     type: 'terminal_run',

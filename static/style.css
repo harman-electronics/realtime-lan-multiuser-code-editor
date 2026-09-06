@@ -350,7 +350,7 @@ body {
   border-color: color-mix(in srgb, var(--success-color) 35%, transparent);
 }
 
-.execution-mode-tag.host {
+.execution-mode-tag.docker {
   color: var(--warning-color);
   background: color-mix(in srgb, var(--warning-color) 10%, transparent);
   border-color: color-mix(in srgb, var(--warning-color) 35%, transparent);
