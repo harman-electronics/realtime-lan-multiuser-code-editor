@@ -3,6 +3,60 @@
 All notable changes to the Real-Time LAN Multiuser Code Editor will be recorded
 in this file.
 
+## Version 5.2 — Guest Docker C++ Execution
+
+Version 5.2 lets approved Guests compile, run, provide live input to, and stop
+C++ programs through the restricted Docker runner on the Admin host. Guest C++
+uses the same isolation, resource limits, concurrency controls, compiler
+diagnostics, and cleanup as Admin C++.
+
+### Added and changed
+
+- Enabled **Compile & Run C++** for authenticated, approved Guests.
+- Enabled live `std::cin` input and Stop for the Guest connection that started
+  the program.
+- Replaced the Guest restriction label and disabled Run state with the shared
+  **Runs in Docker** status and C++ terminal guidance.
+- Preserved one active Docker Python/C++ program per account, at most 20 tracked
+  interactive sessions, and four concurrently running Docker containers shared
+  by Python and C++.
+- Kept the legacy `/api/run` compatibility endpoint Admin-only. Guest C++ uses
+  the authenticated WebSocket terminal, which owns execution, input, and Stop
+  by account and connection.
+- Updated browser cache identifiers so existing users receive the new controls
+  after upgrading.
+
+### Security and limits
+
+- C++ remains confined to disposable Docker containers using Linux user/group
+  `10001:10001`, disabled network and IPC, read-only root/source, dropped
+  capabilities, `no-new-privileges`, and automatic cleanup.
+- Retained the 60-second deadline, 100,000-character output limit, 4,096 input
+  characters per line, 20,000 total input characters, 512 MB RAM, one CPU,
+  64-process limit, 256 open files, and 128 MB writable temporary workspace.
+- A Guest cannot send input to or stop another account/connection's program.
+- Automatic Guest entry remains off by default and should be enabled only on a
+  trusted LAN because an admitted Guest can start restricted C++ containers.
+
+### Verification
+
+- Passed all **29 permanent application tests**, including a real approved-Guest
+  C++ run with live input and inspection of its active Docker restrictions.
+- Passed all **26 execution-matrix checks**: eight Browser Python, nine Docker
+  Python, and nine Docker C++ checks.
+- Verified Guest routing, compiler/input/output completion, per-account duplicate
+  rejection, connection-owned input/Stop, existing Admin compatibility, timeouts,
+  output limits, non-root execution, read-only boundaries, disabled networking,
+  cleanup, and image identity.
+
+### Main components changed
+
+- `app.py`: authenticated Guest access to interactive Docker C++ and input.
+- `static/app.js` and `static/index.html`: Guest Run/input controls, shared Docker
+  labels, and refreshed cache identifiers.
+- `test_app.py`: Guest C++ integration, routing, ownership, and regression tests.
+- `README.md` and `CHANGELOG.md`: Version 5.2 usage, limits, and security guidance.
+
 ## Version 5.1 — Restricted Docker Execution and Classroom Controls
 
 Version 5.1 removes direct C++ execution from the Windows host, adds optional
