@@ -1125,11 +1125,6 @@ class ConnectionManager:
                 status_code=422,
                 detail="Choose a Python or C++ file.",
             )
-        if language == "cpp" and user.get("role") != "admin":
-            raise HTTPException(
-                status_code=403,
-                detail="Only the Admin can execute C++ in the Docker sandbox.",
-            )
         if (
             language == "python"
             and self.access_control.get("python_execution_mode", "browser") != "docker"
@@ -1352,11 +1347,6 @@ class ConnectionManager:
         execution = self.execution_sessions.get(account_id)
         if not execution or execution.get("connection_id") != connection_id:
             raise HTTPException(status_code=404, detail="No program is waiting for your input.")
-        if execution.get("language") == "cpp" and user.get("role") != "admin":
-            raise HTTPException(
-                status_code=403,
-                detail="Only the Admin can send input to a Docker C++ program.",
-            )
         value = str(line)
         if "\n" in value or "\r" in value:
             raise HTTPException(status_code=422, detail="Send one input line at a time.")
@@ -2542,14 +2532,6 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str) -> None:
                         {
                             "type": "terminal_error",
                             "message": "Python is currently set to run inside each participant's browser.",
-                        }
-                    )
-                    continue
-                if language == "cpp" and user.get("role") != "admin":
-                    await websocket.send_json(
-                        {
-                            "type": "terminal_error",
-                            "message": "Only the Admin can execute C++ in the Docker sandbox.",
                         }
                     )
                     continue
