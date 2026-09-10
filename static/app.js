@@ -2454,40 +2454,32 @@ const BROWSER_PYTHON_LIMITS = Object.freeze({
 
 function canRunActiveFile() {
   const file = getActiveFile();
-  if (!file || !state.user) return false;
-  return file.language !== 'cpp' || state.user.role === 'admin';
+  return Boolean(file && state.user);
 }
 
 function updateExecutionControls() {
   const file = getActiveFile();
   if (!file || !elements.executionModeTag) return;
   const isCpp = file.language === 'cpp';
-  const guestCpp = isCpp && state.user?.role !== 'admin';
   const dockerPython = !isCpp && state.pythonExecutionMode === 'docker';
   const adminCanSelectMode = !isCpp && state.user?.role === 'admin' && !state.terminalRunning;
-  elements.btnRunCode.disabled = state.terminalRunning || guestCpp || !state.user;
-  elements.btnRunCode.title = guestCpp
-    ? 'Guests can edit C++, but only the Admin can execute it in Docker.'
-    : isCpp
-      ? 'Compile and run C++ inside an isolated Docker container'
+  elements.btnRunCode.disabled = state.terminalRunning || !state.user;
+  elements.btnRunCode.title = isCpp
+      ? 'Compile and run C++ inside a restricted Docker container on the Admin host'
       : dockerPython
         ? 'Run Python inside a restricted Docker container on the Admin host'
         : 'Run Python safely inside this browser';
-  elements.executionModeText.textContent = guestCpp
-    ? 'Admin-only Docker execution'
-    : isCpp
+  elements.executionModeText.textContent = isCpp
       ? 'Runs in Docker'
       : dockerPython
         ? 'Runs in Docker'
         : 'Runs in this browser';
-  const visualMode = guestCpp ? 'restricted' : (isCpp || dockerPython) ? 'docker' : 'browser';
+  const visualMode = (isCpp || dockerPython) ? 'docker' : 'browser';
   elements.executionModeTag.className = `execution-mode-tag ${visualMode}${adminCanSelectMode ? ' admin-selectable' : ''}`;
   elements.executionModeTag.disabled = !adminCanSelectMode;
   elements.executionModeTag.title = adminCanSelectMode
     ? 'Change the Python execution mode for everyone'
-    : guestCpp
-      ? 'Only the Admin can run C++ in Docker'
-      : isCpp
+    : isCpp
         ? 'C++ runs in Docker'
         : `The Admin selected ${dockerPython ? 'Docker' : 'browser'} Python`;
   document.querySelectorAll('[data-python-mode]').forEach((option) => {
@@ -2498,9 +2490,7 @@ function updateExecutionControls() {
   });
   if (!adminCanSelectMode) closePythonModeMenu();
   if (!state.terminalRunning) {
-    elements.terminalInput.placeholder = guestCpp
-      ? 'Guests cannot execute C++ yet.'
-      : isCpp
+    elements.terminalInput.placeholder = isCpp
         ? 'Run C++ to enter input...'
         : dockerPython
           ? 'Run Docker Python to enter input...'
@@ -2783,10 +2773,6 @@ function runCurrentFile() {
   }
   if (state.terminalRunning) {
     showToast('Stop the current program before starting another.', 'error');
-    return;
-  }
-  if (file.language === 'cpp' && state.user?.role !== 'admin') {
-    showToast('Guests can edit C++, but only the Admin can execute it.', 'error');
     return;
   }
   if (file.language === 'cpp' && state.socket?.readyState !== WebSocket.OPEN) {

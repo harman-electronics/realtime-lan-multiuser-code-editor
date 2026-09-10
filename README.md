@@ -4,25 +4,28 @@ A real-time LAN code editor for Python and C++ with collaborative editing,
 line ownership, Admin-approved Guest access, chat, appearance controls, and
 safer split execution. The Admin can choose whether Python runs inside each
 participant's browser or in restricted Docker containers on the Admin host;
-browser mode is the default. C++ remains Admin-only and Docker-isolated.
+browser mode is the default. Admins and approved Guests run C++ in restricted
+Docker containers on the Admin host.
 Changes, presence, messages, permissions, settings, and file updates are
 synchronized in real time.
 
-## Version 5.1 — Docker Execution and Classroom Controls
+## Version 5.2 — Guest Docker C++ Execution
 
-Version 5.1 replaces direct host C++ execution with disposable restricted
-Linux containers and adds an Admin-controlled Python choice: **Browser Python**
-or **Docker Python**. Browser mode keeps Python on each participant's device
-and remains the default. Docker mode supports a reviewed set of third-party
-libraries while applying the same non-root user, blocked network, read-only
-boundaries, resource limits, and automatic cleanup used for C++.
+Version 5.2 allows approved Guests to select **Compile & Run C++**, enter live
+`std::cin` values, stop their own program, and receive compiler/runtime details.
+Every C++ program still runs inside a fresh restricted Docker container on the
+Admin host. Each account can run one Docker Python or C++ program at a time;
+the server tracks at most 20 interactive executions and allows at most four
+Docker containers to run concurrently across the classroom.
 
-The execution pill beside the connection status opens the Python mode menu for
-the Admin only; every connected user sees and uses the selected mode. Version
-5.1 also adds **Admin Settings → Guest entry**. It is off by default, keeping
-the normal approval queue. When enabled on a trusted LAN, a Guest with an
-available name and colour joins immediately. C++ execution and input remain
-Admin-only. Only the Admin host needs Docker Desktop and WSL 2.
+Input and Stop remain tied to the account and WebSocket connection that started
+the program, so one Guest cannot control another Guest's execution. The legacy
+Admin compatibility route remains Admin-only; the shared live terminal is the
+supported Guest C++ path.
+
+Version 5.1 introduced restricted Docker C++, optional Docker Python, the
+Admin-controlled Python mode menu, and optional automatic Guest entry. Browser
+Python remains the default. Only the Admin host needs Docker Desktop and WSL 2.
 
 Read the [changelog](CHANGELOG.md) for the complete feature history, detailed
 changes, security notes, and previous releases.
@@ -35,9 +38,9 @@ changes, security notes, and previous releases.
 > snapshots, ownership, and permissions are stored locally as readable JSON.
 > Docker significantly reduces the risk from Python and C++ code, but it is not
 > a perfect security boundary. The Admin should keep Docker Desktop updated.
-> C++ remains Admin-run, so the Admin must inspect collaborative C++ code before
-> running it. Turn on automatic Guest entry only when everyone with the LAN
-> address can be trusted.
+> Approved Guests can start C++ containers on the Admin host. Keep normal Guest
+> approval enabled unless everyone with the LAN address can be trusted, and
+> review unexpected code or behaviour before allowing further runs.
 
 > [!IMPORTANT]
 > This is a collaborative prototype, not production authentication. It does
@@ -46,7 +49,7 @@ changes, security notes, and previous releases.
 > restricted containers. Keep the Admin account and LAN trusted and never expose
 > the development server to the public internet.
 
-### Admin-controlled Python execution mode
+### Admin-controlled Python execution mode (Version 5.1)
 
 ![Version 5.1 Admin Python execution mode menu](docs/images/version-5.1-python-mode-menu.png)
 
@@ -58,10 +61,15 @@ changes, security notes, and previous releases.
 
 ![Version 5.1 Guest entry setting off by default](docs/images/version-5.1-guest-entry-setting.png)
 
-All screenshots above were captured from the working Version 5.1 feature
-branch. The terminal shows real `10` and `5` inputs plus Python and NumPy
-results from a restricted container. Submitted input is blue, successful
-status messages are yellow, and red remains reserved for errors and limits.
+### Guest Docker C++ with live input (Version 5.2)
+
+![Version 5.2 Guest Docker C++ execution with live input](docs/images/version-5.2-guest-cpp-docker-input.png)
+
+The Version 5.1 terminal screenshot shows real `10` and `5` inputs plus Python
+and NumPy results from a restricted container. Submitted input is blue,
+successful status messages are yellow, and red remains reserved for errors and
+limits. The Version 5.2 C++ screenshot shows the same live-input workflow from
+an approved Guest account, including the Docker status and successful result.
 
 ## Main features
 
@@ -75,7 +83,8 @@ status messages are yellow, and red remains reserved for errors and limits.
 - Admin-controlled Browser/Docker Python mode, synchronized for all users
 - Browser-side Python 3.14 or restricted Docker Python 3.14 with interactive
   input, output limits, Stop control, and approved libraries in Docker mode
-- Admin-only C++17 execution in disposable restricted Docker containers
+- Admin and approved Guest C++17 execution in disposable restricted Docker
+  containers, with live input and per-account ownership
 - Group Chat and Direct Messages with unread alerts, editing, and deletion
 - One active session per approved Guest and Admin removal controls
 - Adjustable full-screen workspace, terminal, chat, and Admin Settings panels
@@ -212,19 +221,20 @@ characters per input line, and 20,000 input characters per run. Docker Python
 also uses 512 MB RAM, one CPU, 64 processes, a 128 MB temporary workspace, no
 network, and read-only root and source mounts.
 
-## Running C++ as Admin
+## Running C++
 
-Only the Admin can select **Compile & Run C++** or send C++ terminal input.
-Guests can still open, create, and collaboratively edit C++ files, but the Run
-button displays **Admin-only Docker execution** and remains disabled. This temporary
-restriction prevents Guest code from executing operating-system commands on
-the Admin computer.
+Admins and approved Guests can select **Compile & Run C++**, submit live
+terminal input, and stop the program they started. C++ always runs in a fresh
+restricted container on the Admin host; it never runs directly on a Guest
+device or as a native host process.
 
 C++ `std::cin` accepts either `10 5` on one line or values on separate lines.
 Each run uses a new container with a 60-second execution limit, 100,000 output
 characters, 512 MB RAM, one CPU, 64 processes, and a 128 MB temporary
-workspace. Only one interactive Admin run is allowed at a time, and the server
-allows no more than four Docker Python/C++ containers to execute concurrently.
+workspace. Each account may have one interactive Docker Python or C++ program
+at a time. The server tracks at most 20 interactive executions and allows no
+more than four Docker Python/C++ containers to run concurrently. A queued run
+uses the same 60-second deadline while waiting for a slot.
 
 ## C++ compiler and libraries
 
@@ -270,13 +280,14 @@ packages only by reviewing and rebuilding `docker/python-runner/Dockerfile`.
 
 ## Testing
 
-Version 5.1 passes **28/28 permanent automated tests** and **26/26 execution-
+Version 5.2 passes **29/29 permanent automated tests** and **26/26 execution-
 matrix checks**. Eight matrix checks exercise the real pinned Pyodide engine,
 nine exercise Docker Python, and nine exercise Docker C++. The matrix covers
 input, functions, loops, approved Python libraries, compiler/runtime errors,
 timeouts, non-root execution, read-only boundaries, disabled network, output
-limits, cleanup, and image identity. Interactive integration tests also
-inspect the actual restrictions on running Python and C++ containers.
+limits, cleanup, and image identity. Interactive integration tests also verify
+real Guest C++ input, container restrictions, one run per account, and
+connection-owned input and Stop controls.
 
 ```cmd
 python test_app.py

@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import subprocess
@@ -221,7 +222,7 @@ class LiveEditorTestCase(unittest.TestCase):
             response.headers.get("cache-control"),
             "no-cache, no-store, must-revalidate",
         )
-        self.assertIn("5.1-python-modes-2", response.text)
+        self.assertIn("5.2-guest-cpp-1", response.text)
 
     def test_docker_resolver_supports_current_per_user_install_path(self):
         local_app_data = r"C:\Users\Test\AppData\Local"
@@ -493,7 +494,7 @@ class LiveEditorTestCase(unittest.TestCase):
         self.assertIn("Next request opens after a decision", html)
         self.assertIn(".join-request-popover-row.is-active", stylesheet)
         self.assertIn(".join-request-popover-row.is-queued", stylesheet)
-        self.assertIn("5.1-python-modes-2", html)
+        self.assertIn("5.2-guest-cpp-1", html)
 
     def test_manual_student_creation_is_removed_and_admin_can_remove_guest(self):
         admin_token = self.login_admin()
@@ -794,7 +795,7 @@ class LiveEditorTestCase(unittest.TestCase):
         self.assertEqual(response.json()["username"], "Professor Ada")
         self.assertEqual(self.manager.get_session(admin_token)["role"], "admin")
 
-    def test_execution_policy_allows_only_admin_docker_cpp(self):
+    def test_legacy_run_route_remains_admin_only(self):
         unauthenticated = self.client.post(
             "/api/run",
             json={"code": "print('blocked')", "language": "python"},
@@ -929,7 +930,7 @@ class LiveEditorTestCase(unittest.TestCase):
         self.assertIn("__WIFI_CODESHARE_PYTHON_READY__", runner)
         self.assertIn("wifi-codeshare-python-runner:1.0", setup_script)
 
-    def test_websocket_docker_execution_rejects_python_and_guest_cpp(self):
+    def test_websocket_rejects_browser_python_and_routes_guest_cpp_to_docker(self):
         self.assertEqual(app_module.MAX_INTERACTIVE_EXECUTION_SECONDS, 60.0)
         self.assertEqual(app_module.MAX_INTERACTIVE_OUTPUT_CHARS, 100_000)
         self.assertEqual(app_module.MAX_INTERACTIVE_EXECUTIONS, 20)
@@ -954,19 +955,33 @@ class LiveEditorTestCase(unittest.TestCase):
             blocked, _ = self.receive_websocket_type(websocket, "terminal_error")
             self.assertIn("browser", blocked["message"].lower())
 
-        cpp_file = self.manager.create_file("guest-blocked.cpp", "cpp")
+        cpp_file = self.manager.create_file("guest-docker.cpp", "cpp")
         guest = self.approve_guest("Guest Cpp", token)
-        with self.client.websocket_connect("/ws/guest_cpp_blocked") as websocket:
-            self.join_admin_websocket(websocket, guest["token"])
-            websocket.send_json(
-                {
-                    "type": "terminal_run",
-                    "file_id": cpp_file["id"],
-                    "code": "int main() { return 0; }",
-                }
-            )
-            blocked, _ = self.receive_websocket_type(websocket, "terminal_error")
-            self.assertIn("Only the Admin", blocked["message"])
+        async def record_guest_cpp(connection_id, user, file_id, code, language):
+            self.assertEqual(user["role"], "guest")
+            self.assertEqual(file_id, cpp_file["id"])
+            self.assertEqual(code, "int main() { return 0; }")
+            self.assertEqual(language, "cpp")
+            return "run_guest_cpp"
+
+        with patch.object(
+            self.manager,
+            "start_interactive_execution",
+            side_effect=record_guest_cpp,
+        ) as start_execution:
+            with self.client.websocket_connect("/ws/guest_cpp_docker") as websocket:
+                self.join_admin_websocket(websocket, guest["token"])
+                websocket.send_json(
+                    {
+                        "type": "terminal_run",
+                        "file_id": cpp_file["id"],
+                        "code": "int main() { return 0; }",
+                    }
+                )
+                notice, _ = self.receive_websocket_type(websocket, "code_run_notice")
+                self.assertEqual(notice["username"], "Guest Cpp")
+                self.assertEqual(notice["role"], "guest")
+            self.assertEqual(start_execution.await_count, 1)
 
         html = (Path(app_module.STATIC_DIR) / "index.html").read_text(
             encoding="utf-8"
@@ -986,7 +1001,8 @@ class LiveEditorTestCase(unittest.TestCase):
         self.assertIn("initializeTerminalResize", javascript)
         self.assertIn("runBrowserPython", javascript)
         self.assertIn("stopBrowserPython", javascript)
-        self.assertIn("Admin-only Docker execution", javascript)
+        self.assertNotIn("Admin-only Docker execution", javascript)
+        self.assertNotIn("Guests cannot execute C++ yet.", javascript)
         self.assertIn("Runs in Docker", javascript)
         self.assertIn(".terminal-status", stylesheet)
         self.assertIn(".execution-mode-tag", stylesheet)
@@ -1073,11 +1089,12 @@ class LiveEditorTestCase(unittest.TestCase):
         docker_cpp_runner_available(),
         "The restricted Docker C++ image is not ready",
     )
-    def test_interactive_cpp_terminal_accepts_live_input(self):
+    def test_guest_interactive_cpp_terminal_accepts_live_input(self):
         cpp_file = self.manager.create_file("interactive.cpp", "cpp")
-        token = self.login_admin()
-        with self.client.websocket_connect("/ws/admin_cpp_terminal") as websocket:
-            self.join_admin_websocket(websocket, token)
+        admin_token = self.login_admin()
+        guest = self.approve_guest("C++ Runner", admin_token)
+        with self.client.websocket_connect("/ws/guest_cpp_terminal") as websocket:
+            self.join_admin_websocket(websocket, guest["token"])
             websocket.send_json(
                 {
                     "type": "terminal_run",
@@ -1096,7 +1113,7 @@ class LiveEditorTestCase(unittest.TestCase):
             )
             self.receive_websocket_type(websocket, "terminal_started")
             self.receive_websocket_type(websocket, "terminal_ready")
-            execution = self.manager.execution_sessions["admin"]
+            execution = self.manager.execution_sessions[guest["user"]["account_id"]]
             inspect_process = subprocess.run(
                 [
                     execution["docker"],
@@ -1139,6 +1156,52 @@ class LiveEditorTestCase(unittest.TestCase):
             self.assertIn("Total: 15", output)
             self.assertEqual(finished["status"], "completed")
             self.assertEqual(finished["returncode"], 0)
+
+    def test_guest_cpp_preserves_per_account_execution_ownership(self):
+        admin_token = self.login_admin()
+        guest = self.approve_guest("Owned Runner", admin_token)
+        cpp_file = self.manager.create_file("owned.cpp", "cpp")
+        account_id = guest["user"]["account_id"]
+        self.manager.execution_sessions[account_id] = {
+            "connection_id": "original_connection",
+        }
+
+        with patch.object(
+            app_module,
+            "ensure_cpp_docker_ready",
+            return_value="docker",
+        ):
+            with self.assertRaises(app_module.HTTPException) as duplicate:
+                asyncio.run(
+                    self.manager.start_interactive_execution(
+                        "second_connection",
+                        guest["user"],
+                        cpp_file["id"],
+                        "int main() { return 0; }",
+                        "cpp",
+                    )
+                )
+        self.assertEqual(duplicate.exception.status_code, 409)
+        self.assertIn("already have a program running", str(duplicate.exception.detail))
+
+        with self.assertRaises(app_module.HTTPException) as wrong_connection:
+            asyncio.run(
+                self.manager.send_interactive_input(
+                    "second_connection",
+                    guest["user"],
+                    "10 5",
+                )
+            )
+        self.assertEqual(wrong_connection.exception.status_code, 404)
+        self.assertFalse(
+            asyncio.run(
+                self.manager.stop_interactive_execution(
+                    "second_connection",
+                    guest["user"],
+                )
+            )
+        )
+        self.manager.execution_sessions.clear()
 
     @unittest.skipUnless(
         docker_cpp_runner_available(),
@@ -1312,7 +1375,7 @@ class LiveEditorTestCase(unittest.TestCase):
         self.assertIn("margin-left: 3ch;", stylesheet)
         self.assertIn(".remote-cursor > .line-typing-badge", stylesheet)
         self.assertIn("left: 3ch;", stylesheet)
-        self.assertIn("5.1-python-modes-2", html)
+        self.assertIn("5.2-guest-cpp-1", html)
 
 
 if __name__ == "__main__":
